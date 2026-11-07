@@ -1,17 +1,19 @@
 /**
- * MobilePage — 设置页「网络控制中心」
+ * MobilePage — 设置页「移动端本地连接」
  *
- * 2026-08-31 重构 v8（按大王拍板：列表式点击展开，一眼看懂）：
- * 顶部拓扑 + 五个可展开列表项：
+ * 2026-11-07 本地化调整：
+ * 顶部拓扑 + 四个可展开列表项：
  *   设置密码 → 密码输入 + 保存 + 二维码
  *   局域网直连 → 直连地址 + 复制
  *   P2P 内网穿透 → Tailscale 自建指南（用户可选）
- *   官方中继 → 中继服务器地址 + 通道状态
- *   自建 VPS 节点 → 仅自定义配置表单（地址/密钥/保存）
+ *   自定义服务端 → 用户自建 relay-server（地址/密钥/显式启用）
+ *
+ * 官方中继暂时下线：手机默认且优先通过无线局域网直连；桌面“移动端”总开关
+ * 只负责本地 mobile_server，不再隐式启动任何官方或自建远程线路。
  * 列表标题一律纯文字名称；点击展开，再点收起。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useLanguage } from '../../locales'
 import { Section } from '../../ui/PageLayout'
 import { QrCode } from '../../ui/QrCode'
@@ -25,16 +27,13 @@ import {
   relayClientStatus,
   relayClientSetEnabled,
   relayClientUpdateNode,
-  relayClientResetOfficial,
   relayCallerTokenRotate,
   type MobileServerStatus,
   type RelayChannelState,
   type RelayClientStatus,
 } from '../lib/api'
+import { withPairToken } from './mobilePairing'
 import '../../styles/mobile-panel.css'
-
-/** 官方中继默认地址（与 relay_client.rs DEFAULT_RELAY_URL 一致；token 由构建/运行注入，前端不持有） */
-const OFFICIAL_RELAY_URL = 'wss://relay.nuphus.com'
 
 /** 提取 Tauri IPC 错误的干净信息（去掉 "Error: IPC invoke xxx failed: " 前缀） */
 function cleanIpcError(e: unknown): string {
@@ -54,7 +53,7 @@ function lineStateFor(ch: RelayChannelState | undefined, running: boolean): Line
 }
 
 /** 可展开列表项 id */
-type ListItemId = 'password' | 'lan' | 'p2p' | 'relay' | 'vps'
+type ListItemId = 'password' | 'lan' | 'p2p' | 'vps'
 
 export function MobilePage() {
   const { t } = useLanguage()
@@ -71,7 +70,7 @@ export function MobilePage() {
   // 列表展开状态：当前展开项（null=全收起）
   const [openItem, setOpenItem] = useState<ListItemId | null>('password')
 
-  // 中继节点设置
+  // 自定义服务端设置
   const [vpsUrl, setVpsUrl] = useState('')
   const [vpsToken, setVpsToken] = useState('')
   const [vpsPublicUrl, setVpsPublicUrl] = useState('')
@@ -102,53 +101,64 @@ export function MobilePage() {
   }, [refresh])
 
   const running = status?.running ?? false
-  const relayOn = relay?.enabled ?? false
+  const customServerOn = relay?.enabled ?? false
+  const customServerReady =
+    customServerOn &&
+    relay?.state?.relay?.status === 'connected' &&
+    relay?.state?.tunnel?.status === 'connected'
+  const customServerRetrying =
+    customServerOn &&
+    (relay?.state?.relay?.status === 'retrying' ||
+      relay?.state?.tunnel?.status === 'retrying')
+  const customServerFault =
+    customServerOn &&
+    (relay?.state?.relay?.status === 'fault' || relay?.state?.tunnel?.status === 'fault')
 
   // 拓扑中间节点状态推导（真实状态映射，禁止伪造）
-  const topo: 'off' | 'lan' | 'relay' | 'retrying' | 'fault' = (() => {
+  const topo: 'off' | 'lan' | 'server' | 'retrying' | 'fault' = (() => {
     if (!running) return 'off'
+    // 默认入口始终是无线局域网。只有本机没有可用 LAN 地址时，才展示
+    // 用户显式启用的自建服务端状态。
+    if (status?.lan_url) return 'lan'
     const relayCh = relay?.state?.relay
     const tunnelCh = relay?.state?.tunnel
-    if (relayCh?.status === 'connected' || tunnelCh?.status === 'connected') return 'relay'
+    if (relayCh?.status === 'connected' || tunnelCh?.status === 'connected') return 'server'
     if (relayCh?.status === 'fault' || tunnelCh?.status === 'fault') return 'fault'
     if (relayCh?.status === 'retrying' || tunnelCh?.status === 'retrying') return 'retrying'
-    if (status?.lan_url) return 'lan'
     return 'off'
   })()
 
   // 两条连线独立映射真实通道（LAN 直连时整链视为通）：
-  //   PC → 中间 = relay 通道；中间 → MOB = tunnel 通道
-  const lineClsRelay = topo === 'lan' ? 'active' : lineStateFor(relay?.state?.relay, running)
+  //   PC → 中间 = 用户服务端任务通道；中间 → MOB = 隧道通道
+  const lineClsServer = topo === 'lan' ? 'active' : lineStateFor(relay?.state?.relay, running)
   const lineClsTunnel = topo === 'lan' ? 'active' : lineStateFor(relay?.state?.tunnel, running)
-  const midIcon = topo === 'off' ? '···' : topo === 'lan' ? 'LAN' : 'REL'
+  const midIcon = topo === 'off' ? '···' : topo === 'lan' ? 'LAN' : 'SRV'
   const midLabel =
     topo === 'lan'
       ? t('mobile.topoMidLabelLan')
-      : topo === 'relay'
-        ? t('mobile.topoMidLabelRelay')
+      : topo === 'server'
+        ? t('mobile.topoMidLabelServer')
         : topo === 'retrying'
           ? t('mobile.topoMidLabelRetrying')
           : topo === 'fault'
             ? t('mobile.topoMidLabelFault')
             : t('mobile.topoMidLabelOff')
 
-  // 扫码入口地址：实例级稳定（不随状态轮询跳动）
-  const remoteUrlRef = useRef<string | null>(null)
-  useEffect(() => {
-    remoteUrlRef.current = null
-  }, [running, status?.password_set, relay?.public_url])
-  const remoteUrl = useMemo(() => {
-    if (!running || !status?.password_set) return null
-    if (!relay?.public_url) return null
-    if (remoteUrlRef.current === null) {
-      const sep = relay.public_url.includes('?') ? '&' : '?'
-      remoteUrlRef.current = `${relay.public_url}${sep}t=${Date.now()}`
-    }
-    return remoteUrlRef.current
-  }, [running, status, relay])
+  // 默认二维码永远是无线局域网配对入口，不等待、也不依赖任何远程线路。
+  const lanPairUrl = useMemo(() => {
+    if (!running || !status?.password_set || !status.lan_url || !status.token) return null
+    return withPairToken(status.lan_url, status.token)
+  }, [running, status])
 
-  // 官方中继服务器地址（展示用：去协议与端口，只留域名）
-  const relayHost = useMemo(() => {
+  // 可选的自建服务端远程入口：只有用户显式启用并连接成功后才展示。
+  const customPairUrl = useMemo(() => {
+    if (!running || !status?.password_set || !customServerReady || !status?.token) return null
+    if (!relay?.public_url) return null
+    return withPairToken(relay.public_url, status.token)
+  }, [running, status, customServerReady, relay?.public_url])
+
+  // 自建服务端地址（展示用：去协议与端口，只留域名）
+  const customServerHost = useMemo(() => {
     if (!relay?.public_url) return null
     try {
       return new URL(relay.public_url).hostname
@@ -157,21 +167,21 @@ export function MobilePage() {
     }
   }, [relay])
 
-  // 中继已开但公网地址未就绪：2s 轮询直到地址出现
+  // 自建服务端已开但公网地址未就绪：2s 轮询直到地址出现
   useEffect(() => {
-    if (!running || !relayOn || remoteUrl) return
+    if (!running || !customServerOn || customPairUrl) return
     const timer = setTimeout(() => void refresh(), 2000)
     return () => clearTimeout(timer)
-  }, [running, relayOn, remoteUrl, refresh])
+  }, [running, customServerOn, customPairUrl, refresh])
 
-  // 中继通道状态实时刷新：中继启用期间 5s 轮询
+  // 自建服务端状态实时刷新：启用期间 5s 轮询
   useEffect(() => {
-    if (!running || !relayOn) return
+    if (!running || !customServerOn) return
     const timer = window.setInterval(() => void refresh(), 5000)
     return () => window.clearInterval(timer)
-  }, [running, relayOn, refresh])
+  }, [running, customServerOn, refresh])
 
-  /** 手机访问总开关：开 = 启动服务 + 接入中继；关 = 断中继 + 停服 */
+  /** 手机访问总开关：只控制本地 mobile_server；远程线路必须由用户单独启用。 */
   const handleToggle = useCallback(async () => {
     if (busy) return
     setBusy(true)
@@ -179,13 +189,11 @@ export function MobilePage() {
     try {
       if (running) {
         await mobileServerStop()
+        if (customServerOn) {
+          await relayClientSetEnabled(false)
+        }
       } else {
         await mobileServerStart()
-        try {
-          await relayClientSetEnabled(true)
-        } catch (e) {
-          setError(cleanIpcError(e))
-        }
       }
       await refresh()
       window.setTimeout(() => void refresh(), 800)
@@ -194,9 +202,9 @@ export function MobilePage() {
     } finally {
       setBusy(false)
     }
-  }, [busy, running, refresh])
+  }, [busy, running, customServerOn, refresh])
 
-  /** 保存自建 VPS 节点：调后端持久化 + 热重启连接（public_url 留空 = 后端自动派生） */
+  /** 保存并显式启用用户自建服务端（public_url 留空 = 后端自动派生）。 */
   const handleSaveNode = useCallback(async () => {
     if (busy || nodeSaving) return
     setNodeSaving(true)
@@ -208,6 +216,7 @@ export function MobilePage() {
         return
       }
       await relayClientUpdateNode(url, vpsToken.trim(), vpsPublicUrl.trim())
+      await relayClientSetEnabled(true)
       setNodeMsg(t('mobile.nodeSaved'))
       await refresh()
       window.setTimeout(() => void refresh(), 1500)
@@ -218,34 +227,13 @@ export function MobilePage() {
     }
   }, [busy, nodeSaving, vpsUrl, vpsToken, vpsPublicUrl, t, refresh])
 
-  /** 恢复官方中继节点：url/public_url/token 重置官方默认 + 热重启 */
-  const handleResetOfficial = useCallback(async () => {
-    if (busy || nodeSaving) return
-    if (!window.confirm(t('mobile.nodeResetOfficialConfirm'))) return
-    setNodeSaving(true)
-    setNodeMsg(null)
-    try {
-      await relayClientResetOfficial()
-      setVpsUrl('')
-      setVpsToken('')
-      setVpsPublicUrl('')
-      setNodeMsg(t('mobile.nodeResetOfficialDone'))
-      await refresh()
-      window.setTimeout(() => void refresh(), 1500)
-    } catch (e) {
-      setNodeMsg(cleanIpcError(e))
-    } finally {
-      setNodeSaving(false)
-    }
-  }, [busy, nodeSaving, t, refresh])
-
-  /** 遗留状态修复路径：服务在跑但中继未开——扫码入口内一键接入中继 */
-  const handleEnableRelay = useCallback(async () => {
+  /** 断开设用户已启用的自建服务端，不影响本地无线局域网直连。 */
+  const handleDisableCustomServer = useCallback(async () => {
     if (busy) return
     setBusy(true)
     setError(null)
     try {
-      await relayClientSetEnabled(true)
+      await relayClientSetEnabled(false)
       await refresh()
       window.setTimeout(() => void refresh(), 800)
     } catch (e) {
@@ -255,7 +243,7 @@ export function MobilePage() {
     }
   }, [busy, refresh])
 
-  /** 轮换中继调用凭据（caller_token） */
+  /** 轮换自建服务端调用凭据（caller_token） */
   const handleRotateCallerToken = useCallback(async () => {
     if (busy) return
     if (!window.confirm(t('mobile.relayRotateConfirm'))) return
@@ -289,6 +277,17 @@ export function MobilePage() {
   }, [busy, refresh])
 
   const handleCopyUrl = useCallback(async () => {
+    if (!lanPairUrl) return
+    try {
+      await navigator.clipboard.writeText(lanPairUrl)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* 剪贴板不可用时静默失败 */
+    }
+  }, [lanPairUrl])
+
+  const handleCopyLanAddress = useCallback(async () => {
     if (!status?.lan_url) return
     try {
       await navigator.clipboard.writeText(status.lan_url)
@@ -297,18 +296,18 @@ export function MobilePage() {
     } catch {
       /* 剪贴板不可用时静默失败 */
     }
-  }, [status])
+  }, [status?.lan_url])
 
   const handleCopyRemoteUrl = useCallback(async () => {
-    if (!remoteUrl) return
+    if (!customPairUrl) return
     try {
-      await navigator.clipboard.writeText(remoteUrl)
+      await navigator.clipboard.writeText(customPairUrl)
       setCopiedRemote(true)
       window.setTimeout(() => setCopiedRemote(false), 1500)
     } catch {
       /* 剪贴板不可用时静默失败 */
     }
-  }, [remoteUrl])
+  }, [customPairUrl])
 
   /** 保存配对密码 */
   const handlePasswordSave = useCallback(async () => {
@@ -319,13 +318,6 @@ export function MobilePage() {
     try {
       await mobilePasswordSet(pwd)
       setPasswordInput('')
-      if (!relayOn) {
-        try {
-          await relayClientSetEnabled(true)
-        } catch (e) {
-          setError(cleanIpcError(e))
-        }
-      }
       await refresh()
       window.setTimeout(() => void refresh(), 800)
       window.setTimeout(() => void refresh(), 2500)
@@ -334,7 +326,7 @@ export function MobilePage() {
     } finally {
       setPasswordSaving(false)
     }
-  }, [passwordInput, busy, passwordSaving, relayOn, refresh])
+  }, [passwordInput, busy, passwordSaving, refresh])
 
   /** 列表项展开/收起切换 */
   const toggleItem = (id: ListItemId) => setOpenItem(v => (v === id ? null : id))
@@ -379,7 +371,7 @@ export function MobilePage() {
               </div>
               <span className="mobile-topo-label">{t('mobile.topoDeskLabel')}</span>
             </div>
-            <div className={`mobile-topo-line ${lineClsRelay}`} />
+            <div className={`mobile-topo-line ${lineClsServer}`} />
             <div className={`mobile-topo-node is-mid state-${topo}`}>
               <div className="mobile-topo-icon" title={midLabel}>
                 {midIcon}
@@ -444,33 +436,21 @@ export function MobilePage() {
               {/* 扫码二维码（配对成功后出现） */}
               {!status?.password_set ? (
                 <p className="mobile-pro-locked-text">{t('mobile.scanNeedPassword')}</p>
-              ) : !relayOn ? (
-                <div className="mobile-scan-repair">
-                  <p className="mobile-pro-locked-text">{t('mobile.scanNeedRelay')}</p>
-                  <button
-                    type="button"
-                    className="mobile-panel-save"
-                    disabled={busy}
-                    onClick={handleEnableRelay}
-                  >
-                    {t('mobile.relayEnableBtn')}
-                  </button>
-                </div>
-              ) : remoteUrl ? (
+              ) : lanPairUrl ? (
                 <div className="mobile-qr-split">
                   {/* 左：二维码 + 复制链接（并列紧凑块） */}
                   <div className="mobile-qr-block">
-                    <QrCode value={remoteUrl} size={150} />
+                    <QrCode value={lanPairUrl} size={150} />
                     <button
                       className="mobile-panel-url"
-                      onClick={handleCopyRemoteUrl}
+                      onClick={handleCopyUrl}
                       title={t('mobile.copyUrl')}
                     >
-                      {copiedRemote ? <IconCheck size={13} /> : <IconCopy size={13} />}
-                      <span>{t('mobile.copyRemoteLink')}</span>
+                      {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                      <span>{t('mobile.copyLocalLink')}</span>
                     </button>
                   </div>
-                  {/* 右：三段说明（与二维码平行显示，大王 2026-09-03 定稿） */}
+                  {/* 右：无线局域网连接说明 */}
                   <ol className="mobile-qr-steps">
                     <li>{t('mobile.qrStep1')}</li>
                     <li>{t('mobile.qrStep2')}</li>
@@ -478,7 +458,7 @@ export function MobilePage() {
                   </ol>
                 </div>
               ) : (
-                <p className="mobile-pro-locked-text">{t('mobile.qrConnecting')}</p>
+                <p className="mobile-pro-locked-text">{t('mobile.scanNeedLan')}</p>
               )}
             </div>
           )}
@@ -497,7 +477,7 @@ export function MobilePage() {
                   </span>
                   <button
                     className="mobile-backup-copy"
-                    onClick={handleCopyUrl}
+                    onClick={handleCopyLanAddress}
                     title={t('mobile.copyAddress')}
                   >
                     {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
@@ -527,48 +507,7 @@ export function MobilePage() {
           )}
         </div>
 
-        {/* ④ 官方中继 */}
-        <div className="mobile-list-item">
-          {listHead('relay', t('mobile.listRelay'))}
-          {openItem === 'relay' && (
-            <div className="mobile-list-body">
-              <div className="mobile-relay-row">
-                <span className="mobile-list-hint">{t('mobile.relayServerAddr')}</span>
-                <span className="mobile-panel-address" title={relay?.public_url ?? undefined}>
-                  {relayHost ?? t('mobile.routeStateOff')}
-                </span>
-              </div>
-              {relay?.device_id && (
-                <div className="mobile-relay-row">
-                  <span className="mobile-list-hint">{t('mobile.deviceIdLabel')}</span>
-                  <span className="mobile-panel-address" title={relay.device_id}>
-                    {relay.device_id}
-                  </span>
-                </div>
-              )}
-              <p className="mobile-list-hint">
-                {!running
-                  ? t('mobile.routeStateOff')
-                  : topo === 'relay'
-                    ? t('mobile.relayChanConnected')
-                    : topo === 'retrying'
-                      ? t('mobile.relayChanRetrying', String(relay?.state?.relay?.attempts ?? 0))
-                      : topo === 'fault'
-                        ? t('mobile.relayChanFault')
-                        : t('mobile.routeStateOff')}
-              </p>
-              {/* 鉴权类故障自愈提示（issue #7）：403/401 = token 与中继不匹配 */}
-              {topo === 'fault' &&
-                [relay?.state?.relay?.reason, relay?.state?.tunnel?.reason]
-                  .filter(Boolean)
-                  .some(r => (r ?? '').includes('403') || (r ?? '').includes('401')) && (
-                  <p className="mobile-list-warn">{t('mobile.relayAuthWarn')}</p>
-                )}
-            </div>
-          )}
-        </div>
-
-        {/* ⑤ 自建 VPS 节点 */}
+        {/* ④ 自定义服务端（可选，默认关闭） */}
         <div className="mobile-list-item">
           {listHead('vps', t('mobile.listVps'))}
           {openItem === 'vps' && (
@@ -578,7 +517,7 @@ export function MobilePage() {
               <input
                 className="mobile-node-input"
                 value={vpsUrl}
-                placeholder="wss://119.29.x.x:18080"
+                placeholder="wss://your-server.example.com"
                 onChange={e => {
                   setVpsUrl(e.target.value)
                   setNodeMsg(null)
@@ -614,14 +553,64 @@ export function MobilePage() {
               >
                 {nodeSaving ? t('mobile.nodeSaving') : t('mobile.nodeSave')}
               </button>
-              <button
-                type="button"
-                className="mobile-node-reset"
-                disabled={busy || nodeSaving}
-                onClick={handleResetOfficial}
-              >
-                {t('mobile.nodeResetOfficial')}
-              </button>
+              {customServerOn && (
+                <button
+                  type="button"
+                  className="mobile-node-reset"
+                  disabled={busy || nodeSaving}
+                  onClick={handleDisableCustomServer}
+                >
+                  {t('mobile.nodeDisable')}
+                </button>
+              )}
+              <div className="mobile-relay-row">
+                <span className="mobile-list-hint">{t('mobile.relayServerAddr')}</span>
+                <span className="mobile-panel-address" title={relay?.public_url ?? undefined}>
+                  {customServerHost ?? t('mobile.routeStateOff')}
+                </span>
+              </div>
+              {relay?.device_id && (
+                <div className="mobile-relay-row">
+                  <span className="mobile-list-hint">{t('mobile.deviceIdLabel')}</span>
+                  <span className="mobile-panel-address" title={relay.device_id}>
+                    {relay.device_id}
+                  </span>
+                </div>
+              )}
+              <p className="mobile-list-hint">
+                {!customServerOn
+                  ? t('mobile.routeStateOff')
+                  : customServerReady
+                    ? t('mobile.relayChanConnected')
+                    : customServerRetrying
+                      ? t('mobile.relayChanRetrying', String(relay?.state?.relay?.attempts ?? 0))
+                      : customServerFault
+                        ? t('mobile.relayChanFault')
+                        : t('mobile.routeStateOff')}
+              </p>
+              {customServerOn &&
+                customServerFault &&
+                [relay?.state?.relay?.reason, relay?.state?.tunnel?.reason]
+                  .filter(Boolean)
+                  .some(r => (r ?? '').includes('403') || (r ?? '').includes('401')) && (
+                  <p className="mobile-list-warn">{t('mobile.relayAuthWarn')}</p>
+                )}
+              {customPairUrl && (
+                <div className="mobile-qr-split">
+                  <div className="mobile-qr-block">
+                    <QrCode value={customPairUrl} size={150} />
+                    <button
+                      className="mobile-panel-url"
+                      onClick={handleCopyRemoteUrl}
+                      title={t('mobile.copyUrl')}
+                    >
+                      {copiedRemote ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                      <span>{t('mobile.copyRemoteLink')}</span>
+                    </button>
+                  </div>
+                  <p className="mobile-list-hint">{t('mobile.customServerQrHint')}</p>
+                </div>
+              )}
               {nodeMsg && <div className="mobile-node-msg">{nodeMsg}</div>}
             </div>
           )}
@@ -634,7 +623,7 @@ export function MobilePage() {
           <button
             type="button"
             className="mobile-panel-reset"
-            disabled={busy}
+            disabled={busy || !customServerOn}
             title={t('mobile.relayRotateHint')}
             onClick={handleRotateCallerToken}
           >

@@ -41,6 +41,7 @@ import { StopChoiceDialog } from '../ui/StopChoiceDialog'
 import MobileErrorBoundary from './components/MobileErrorBoundary'
 import RatingSheet from './components/RatingSheet'
 import PairingGuide from './components/PairingGuide'
+import ServerAddressControl from './components/ServerAddressControl'
 import {
   isPrivateHost,
   probeLanDirect,
@@ -1126,6 +1127,7 @@ export default function App() {
           <div className="mobile-boot-card">
             <h2>{t('mobile.bootTimeoutTitle')}</h2>
             <p>{t('mobile.bootTimeoutDesc')}</p>
+            <ServerAddressControl />
             <button
               type="button"
               className="mobile-boot-btn is-secondary"

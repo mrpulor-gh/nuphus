@@ -45,12 +45,14 @@ fn config_path() -> std::path::PathBuf {
         .join("relay_client.json")
 }
 
-// ── 官方中继默认配置（开箱即用，零配置） ──────────────────────────────
-// 首次启动自动写入 url/public_url；自建中继用户可覆盖 relay_client.json 后不受影响。
+// ── 官方中继配置 ──────────────────────────────────────────────────────
+// 2026-11-07：产品转为完全本地运行，官方中继线路暂时下线。保留这套可逆开关，
+// 方便未来重新开放；当前版本只允许用户显式配置自建服务端。
 // ⚠️ 官方中继凭据（device/caller token）绝不硬编码在源码——仓库公开（github/gitee），
 // 硬编码 = 任何人克隆即拿到服务器凭据（2026-08-26 审计发现，commit ab71791 曾硬编码）。
 // 改为构建/运行时经环境变量注入：NUPHUS_RELAY_DEVICE_TOKEN / NUPHUS_RELAY_CALLER_TOKEN；
 // 未注入时留空（用户自建中继在 relay_client.json 自行配置，或官方发布流程注入）。
+const OFFICIAL_RELAY_AVAILABLE: bool = false;
 const DEFAULT_RELAY_URL: &str = "wss://relay.nuphus.com";
 const DEFAULT_RELAY_PUBLIC_URL: &str = "https://r.nuphus.com";
 
@@ -58,17 +60,70 @@ const DEFAULT_RELAY_PUBLIC_URL: &str = "https://r.nuphus.com";
 /// ensure_default_config 检测到即自动迁移为唯一 id
 const LEGACY_SHARED_DEVICE_IDS: [&str; 1] = ["desktop-main"];
 
-/// 确保中继配置就绪：文件缺失或关键字段为空时写入官方默认值（幂等，可重复调用）。
-/// 调用时机：Tauri setup（spawn_relay_loops 之前）——新用户首次使用免配置，
-/// 开启手机访问即自动启用官方中继；自建中继用户已有配置则原样保留。
+/// 提取 scheme://authority/path 形态中的 host（不带端口）。配置由用户输入，
+/// 仅用于识别官方域名；解析失败时返回 None。
+fn url_host(raw: &str) -> Option<&str> {
+    let authority = raw.trim().split_once("://")?.1.split('/').next()?;
+    let authority = authority.rsplit('@').next()?;
+    if authority.starts_with('[') {
+        let end = authority.find(']')?;
+        return Some(&authority[..=end]);
+    }
+    authority.split(':').next().filter(|host| !host.is_empty())
+}
+
+/// 是否为 Nuphus 官方中继地址。用于当前“完全本地运行”阶段阻止旧配置、
+/// 构建注入或手工编辑重新接回官方服务。
+fn is_official_relay_url(raw: &str) -> bool {
+    let Some(host) = url_host(raw) else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    matches!(
+        host.trim_end_matches('.'),
+        "relay.nuphus.com" | "r.nuphus.com"
+    )
+}
+
+/// 清退旧版官方线路配置，保留自建服务端配置。
+fn retire_official_config(cfg: &mut RelayClientConfig) -> bool {
+    if OFFICIAL_RELAY_AVAILABLE
+        || (!is_official_relay_url(&cfg.url) && !is_official_relay_url(&cfg.public_url))
+    {
+        return false;
+    }
+    cfg.enabled = false;
+    cfg.url.clear();
+    cfg.public_url.clear();
+    cfg.token.clear();
+    cfg.caller_token.clear();
+    true
+}
+
+/// 确保本地中继配置就绪（幂等，可重复调用）。
+/// 调用时机：Tauri setup（spawn_relay_loops 之前）。
+///
+/// 当前官方中继下线：
+/// - 新用户只生成唯一 device_id，不写入官方 url/token；
+/// - 旧版本遗留的官方配置迁移为 disabled 并清空凭据；
+/// - 用户已配置的自建服务端原样保留。
 pub fn ensure_default_config() {
     let mut cfg = load_config();
     let mut changed = false;
-    if cfg.url.trim().is_empty() {
+
+    if retire_official_config(&mut cfg) {
+        changed = true;
+        tracing::info!("[Relay] 官方中继已暂时下线，已停用旧版官方线路配置");
+    }
+
+    if OFFICIAL_RELAY_AVAILABLE && cfg.url.trim().is_empty() {
         cfg.url = DEFAULT_RELAY_URL.to_string();
         changed = true;
     }
-    if cfg.token.trim().is_empty() {
+    if OFFICIAL_RELAY_AVAILABLE
+        && is_official_relay_url(&cfg.url)
+        && cfg.token.trim().is_empty()
+    {
         // 官方凭据仅经构建期注入（env!：发布 CI 设环境变量 → 二进制内嵌）或运行时
         // 环境变量注入；均未注入则留空，用户自建中继在 relay_client.json 自行配置。
         let injected = env!("NUPHUS_RELAY_DEVICE_TOKEN").trim().to_string();
@@ -79,7 +134,10 @@ pub fn ensure_default_config() {
             changed = true;
         }
     }
-    if cfg.caller_token.trim().is_empty() {
+    if OFFICIAL_RELAY_AVAILABLE
+        && is_official_relay_url(&cfg.url)
+        && cfg.caller_token.trim().is_empty()
+    {
         let injected = env!("NUPHUS_RELAY_CALLER_TOKEN").trim().to_string();
         let rt = std::env::var("NUPHUS_RELAY_CALLER_TOKEN").unwrap_or_default();
         let t = if !injected.is_empty() { injected } else { rt };
@@ -88,7 +146,10 @@ pub fn ensure_default_config() {
             changed = true;
         }
     }
-    if cfg.public_url.trim().is_empty() {
+    if OFFICIAL_RELAY_AVAILABLE
+        && is_official_relay_url(&cfg.url)
+        && cfg.public_url.trim().is_empty()
+    {
         cfg.public_url = DEFAULT_RELAY_PUBLIC_URL.to_string();
         changed = true;
     }
@@ -112,7 +173,7 @@ pub fn ensure_default_config() {
             tracing::warn!("[Relay] 初始化默认配置失败: {e}");
         } else {
             tracing::info!(
-                "[Relay] 已初始化官方中继默认配置（device_id={}）",
+                "[Relay] 已初始化本地移动端连接配置（device_id={}）",
                 cfg.device_id
             );
         }
@@ -179,18 +240,21 @@ pub async fn relay_client_set_enabled(
 ) -> Result<String, String> {
     let mut cfg = load_config();
     cfg.enabled = enabled;
+    if enabled && !OFFICIAL_RELAY_AVAILABLE && is_official_relay_url(&cfg.url) {
+        return Err("官方中继当前未提供，请配置自建服务端后再启用".into());
+    }
     if enabled && !relay_loops_allowed(&cfg) {
         return Err(
-            "中继配置不完整（url/device_id/token），请先完成 relay_client.json 配置".into(),
+            "服务端配置不完整（url/device_id/token），请先填写自建服务端信息".into(),
         );
     }
     save_config(&cfg)?;
     if enabled {
         spawn_relay_loops(app);
-        Ok("中继已启用".into())
+        Ok("自定义服务端已启用".into())
     } else {
         stop_relay_loops().await;
-        Ok("中继已停用".into())
+        Ok("自定义服务端已断开".into())
     }
 }
 
@@ -207,7 +271,10 @@ pub async fn relay_client_update_node(
     let mut cfg = load_config();
     let url = url.trim().to_string();
     if url.is_empty() {
-        return Err("中继地址不能为空".into());
+        return Err("服务端地址不能为空".into());
+    }
+    if !OFFICIAL_RELAY_AVAILABLE && is_official_relay_url(&url) {
+        return Err("官方中继当前未提供，请填写自建服务端地址".into());
     }
     cfg.url = url;
     if !token.is_empty() {
@@ -215,16 +282,20 @@ pub async fn relay_client_update_node(
     }
     if !public_url.trim().is_empty() {
         cfg.public_url = public_url.trim().to_string();
+    } else if !OFFICIAL_RELAY_AVAILABLE && is_official_relay_url(&cfg.public_url) {
+        // 旧版官方配置残留不能挂到新的自建服务端上；留空让 public_tunnel_url
+        // 从用户填写的服务端地址重新派生。
+        cfg.public_url.clear();
     }
-    if !relay_loops_allowed(&cfg) {
-        return Err("中继配置不完整（url/device_id/token），请检查后重试".into());
+    if cfg.url.is_empty() || cfg.device_id.is_empty() || cfg.token.is_empty() {
+        return Err("服务端配置不完整（url/device_id/token），请检查后重试".into());
     }
     save_config(&cfg)?;
     if cfg.enabled {
         stop_relay_loops().await;
         spawn_relay_loops(app);
     }
-    Ok("中继节点已更新".into())
+    Ok("自定义服务端配置已更新".into())
 }
 
 /// 恢复官方中继节点（自建 VPS 不满意时一键回退）：url/public_url 重置官方默认，
@@ -232,6 +303,9 @@ pub async fn relay_client_update_node(
 /// 已启用时热重启连接，无需重启应用。
 #[tauri::command]
 pub async fn relay_client_reset_official(app: tauri::AppHandle) -> Result<String, String> {
+    if !OFFICIAL_RELAY_AVAILABLE {
+        return Err("官方中继当前未提供，请配置自建服务端".into());
+    }
     let mut cfg = load_config();
     cfg.url = DEFAULT_RELAY_URL.to_string();
     cfg.public_url = DEFAULT_RELAY_PUBLIC_URL.to_string();
@@ -1001,7 +1075,11 @@ pub fn relay_client_status() -> RelayClientStatus {
         enabled: cfg.enabled,
         state: relay_conn_state(),
         // 二维码/配对链接是导航入口：携带 ?device= 供中继按设备路由（多用户改造）
-        public_url: public_tunnel_entry_url(&cfg),
+        public_url: if !OFFICIAL_RELAY_AVAILABLE && is_official_relay_url(&cfg.url) {
+            None
+        } else {
+            public_tunnel_entry_url(&cfg)
+        },
         device_id: cfg.device_id,
     }
 }
@@ -1017,9 +1095,16 @@ struct RelayHandle {
 
 static RELAY_HANDLE: std::sync::RwLock<Option<RelayHandle>> = std::sync::RwLock::new(None);
 
-/// 启动条件（纯函数）：配置 enabled 且完整。
+/// 配置字段是否足以建立连接（与用户当前是否启用无关）。
+fn relay_config_complete(cfg: &RelayClientConfig) -> bool {
+    !cfg.url.is_empty() && !cfg.device_id.is_empty() && !cfg.token.is_empty()
+}
+
+/// 启动条件（纯函数）：配置 enabled 且完整；当前阶段拒绝官方中继地址。
 pub fn relay_loops_allowed(cfg: &RelayClientConfig) -> bool {
-    cfg.enabled && !cfg.url.is_empty() && !cfg.device_id.is_empty() && !cfg.token.is_empty()
+    cfg.enabled
+        && relay_config_complete(cfg)
+        && (OFFICIAL_RELAY_AVAILABLE || !is_official_relay_url(&cfg.url))
 }
 
 /// 启动中继双回路（幂等：已运行则不重复 spawn）。
@@ -1807,10 +1892,12 @@ mod backoff_tests {
             public_url: String::new(),
         };
         // enabled + 配置完整 → 允许（Pro 体系移除后，远程访问对所有配对设备免费）
+        assert!(relay_config_complete(&cfg));
         assert!(relay_loops_allowed(&cfg));
 
         let mut disabled = cfg.clone();
         disabled.enabled = false;
+        assert!(relay_config_complete(&disabled));
         assert!(!relay_loops_allowed(&disabled));
 
         let mut no_url = cfg.clone();
@@ -1822,6 +1909,61 @@ mod backoff_tests {
         let mut no_token = cfg.clone();
         no_token.token = String::new();
         assert!(!relay_loops_allowed(&no_token));
+    }
+
+    #[test]
+    fn official_relay_is_blocked_while_local_only_mode_is_active() {
+        let cfg = RelayClientConfig {
+            enabled: true,
+            url: "wss://relay.nuphus.com/ws/device".into(),
+            device_id: "dev-1".into(),
+            token: "tok".into(),
+            caller_token: "caller".into(),
+            public_url: "https://r.nuphus.com".into(),
+        };
+        assert!(is_official_relay_url(&cfg.url));
+        assert!(is_official_relay_url(&cfg.public_url));
+        assert!(is_official_relay_url("wss://RELAY.nuphus.com./ws/device"));
+        assert!(!relay_loops_allowed(&cfg));
+
+        let custom = RelayClientConfig {
+            url: "wss://relay.example.com/ws/device".into(),
+            public_url: "https://relay.example.com".into(),
+            ..cfg
+        };
+        assert!(!is_official_relay_url(&custom.url));
+        assert!(relay_loops_allowed(&custom));
+    }
+
+    #[test]
+    fn local_only_mode_retires_official_config_but_preserves_custom_server() {
+        let mut official = RelayClientConfig {
+            enabled: true,
+            url: "wss://r.nuphus.com".into(),
+            device_id: "dev-1".into(),
+            token: "official-token".into(),
+            caller_token: "official-caller".into(),
+            public_url: "https://r.nuphus.com".into(),
+        };
+        assert!(retire_official_config(&mut official));
+        assert!(!official.enabled);
+        assert!(official.url.is_empty());
+        assert!(official.public_url.is_empty());
+        assert!(official.token.is_empty());
+        assert!(official.caller_token.is_empty());
+        assert_eq!(official.device_id, "dev-1");
+
+        let mut custom = RelayClientConfig {
+            enabled: true,
+            url: "wss://relay.example.com/ws/device".into(),
+            device_id: "dev-2".into(),
+            token: "custom-token".into(),
+            caller_token: "custom-caller".into(),
+            public_url: "https://relay.example.com".into(),
+        };
+        assert!(!retire_official_config(&mut custom));
+        assert_eq!(custom.url, "wss://relay.example.com/ws/device");
+        assert!(custom.enabled);
     }
 
     #[test]

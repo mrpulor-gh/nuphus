@@ -45,6 +45,7 @@ import {
   visibleGroupSessions,
 } from '../../main-window/chat/sessionGroups'
 import { t } from '../i18n'
+import ServerAddressControl from './ServerAddressControl'
 
 interface Props {
   wsStatus: WsStatus
@@ -993,6 +994,10 @@ export default function NavBar({
               <span className="mobile-settings-card-title is-secondary">历史记录</span>
               <span className="mobile-settings-card-value is-action">拉取同步</span>
             </button>
+            <ServerAddressControl
+              defaultExpanded
+              onNavigated={() => setNetworkOpen(false)}
+            />
             {/* 中继通道手动「切换到本地网络」：整页跳转 http 局域网（top-level 不受 mixed
                 content 限制）。仅 wan（经中继打开）展示；局域网 http 页已直连无需切。 */}
             {connMode === 'wan' && onSwitchToLanManual && (
@@ -1028,7 +1033,9 @@ export default function NavBar({
               </div>
               {getCachedRelayUrl() && (
                 <div className="mobile-settings-conn-item">
-                  <span className="mobile-settings-conn-label is-relay">中继</span>
+                  <span className="mobile-settings-conn-label is-relay">
+                    {t('mobile.connRelay')}
+                  </span>
                   <span className="mobile-settings-conn-ip">{getCachedRelayUrl()}</span>
                   <button
                     type="button"
@@ -1173,7 +1180,7 @@ export default function NavBar({
     )
   }
 
-  // 空闲：连接状态（居中锚点）。pill 即网络与连接入口——显示当前渠道（局域网/中继）
+  // 空闲：连接状态（居中锚点）。pill 即网络与连接入口——显示当前渠道（局域网/服务端）
   // + 状态色（绿=在线 / 黄=连接中 / 红=断开），点击进入设置抽屉 network 子视图。
   return (
     <>

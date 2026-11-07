@@ -1885,6 +1885,137 @@ body {
   cursor: default;
 }
 
+/* ── 服务端地址配置（配对页 / 启动超时 / 网络与连接弹窗共用） ─────────── */
+
+.mobile-server-config {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto 16px;
+  overflow: hidden;
+  border-radius: var(--m-radius-card);
+  background: var(--m-bg);
+  text-align: left;
+}
+
+.mobile-server-config-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--m-fg);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-server-config-toggle code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--m-fg-secondary);
+  font-family: var(--m-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 11px;
+}
+
+.mobile-server-config-action {
+  color: var(--m-blue);
+  font-weight: 500;
+}
+
+.mobile-server-config-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+  border-top: 0.5px solid var(--m-separator);
+}
+
+.mobile-server-config-body label {
+  padding-top: 10px;
+  color: var(--m-fg-secondary);
+  font-size: 12px;
+}
+
+.mobile-server-config-row {
+  display: flex;
+  gap: 8px;
+}
+
+.mobile-server-config-row input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 11px;
+  border: none;
+  outline: none;
+  border-radius: 10px;
+  background: var(--m-fill);
+  color: var(--m-fg);
+  font-family: var(--m-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+}
+
+.mobile-server-config-row button {
+  flex: none;
+  min-width: 58px;
+  height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 10px;
+  background: var(--m-btn-bg);
+  color: var(--m-btn-fg);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mobile-server-config-row button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.mobile-server-config-body p {
+  margin: 0;
+  color: var(--m-fg-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mobile-server-config-body .is-error,
+.mobile-server-config-body .is-ok {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mobile-server-config-body .is-error {
+  color: var(--m-fail);
+}
+
+.mobile-server-config-body .is-ok {
+  color: var(--m-ok);
+}
+
+/* 网络弹窗的卡片已有圆角和分隔，内嵌配置不重复套卡片间距 */
+.mobile-settings-card > .mobile-server-config {
+  max-width: none;
+  margin: 0;
+  border-radius: 0;
+  border-bottom: 0.5px solid var(--m-separator);
+}
+
+.mobile-settings-card > .mobile-server-config:last-child {
+  border-bottom: none;
+}
+
 /* ── 危险操作确认卡（悬浮于输入栏上方，模态性质打断） ───────────────── */
 
 .mobile-confirm {

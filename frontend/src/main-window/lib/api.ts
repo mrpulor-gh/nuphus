@@ -2069,23 +2069,18 @@ export function relayClientStatus() {
   return invoke<RelayClientStatus>('relay_client_status')
 }
 
-/** 中继开关：持久化 enabled + 运行时即时启停（免重启） */
+/** 自建服务端开关：持久化 enabled + 运行时即时启停（免重启） */
 export function relayClientSetEnabled(enabled: boolean) {
   return invoke<string>('relay_client_set_enabled', { enabled })
 }
 
-/** 更新中继节点配置（官方/自建 VPS）：持久化 url/token/public_url + 热重启连接。
+/** 更新自建服务端配置：持久化 url/token/public_url + 热重启连接。
  *  token / publicUrl 传空 = 保留现状 */
 export function relayClientUpdateNode(url: string, token: string, publicUrl?: string) {
   return invoke<string>('relay_client_update_node', { url, token, publicUrl })
 }
 
-/** 恢复官方中继节点（自建 VPS 不满意一键回退）：url/public_url/token 重置官方默认 + 热重启 */
-export function relayClientResetOfficial() {
-  return invoke<string>('relay_client_reset_official')
-}
-
-/** 轮换中继调用凭据（caller_token）：服务端热生效，旧凭据即刻失效，已配对手机外网访问需重新扫码 */
+/** 轮换自建服务端调用凭据（caller_token）：旧凭据即刻失效，远程配对需重新扫码 */
 export function relayCallerTokenRotate() {
   return invoke<string>('relay_caller_token_rotate')
 }

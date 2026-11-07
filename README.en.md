@@ -23,9 +23,9 @@
   <img src="docs/readme-hero/preview.png" alt="Nuphus desktop & mobile" width="100%">
 </p>
 
-**Nuphus is an AI Agent that runs on your computer — local, private, and with real desktop execution power. Your phone is its second screen.**
+**Nuphus is an AI Agent that runs entirely on your computer — local service, private data, and real desktop execution power. Your phone is its second screen on the same Wi-Fi LAN.**
 
-It reads the screen, drives the mouse and keyboard, controls windows, reads and writes files, and orchestrates the browser — turning LLM reasoning into real automation. Data stays on your machine, the model is your choice, and the Agent gets things done for you. Every session you start on the desktop is synced to your phone in real time — the same memory, the same Agent, the same conversation, continuing wherever you are.
+It reads the screen, drives the mouse and keyboard, controls windows, reads and writes files, and orchestrates the browser — turning LLM reasoning into real automation. The service, data, and Agent all run locally; model connections are configured by you. The phone connects to the desktop over the local Wi-Fi LAN by default, sharing the same memory, Agent, and conversation.
 
 ---
 
@@ -86,9 +86,10 @@ Nuphus separates "execution" from "control": **the desktop is the Agent's hands,
 - **Real-time event stream** — every step (thinking, tool calls, results) streams to the phone over WebSocket
 - **Workflow remote control** — pause, resume, stop running workflows from your phone
 - **Execution trace playback** — view the Agent's full trace on the phone; every step is transparent
-- **Free remote access** — auto direct LAN connection (zero config); outside the LAN it routes through a relay server that never stores content, only authenticates and forwards
+- **Wi-Fi LAN direct** — the phone reaches the local service directly when both devices share the same Wi-Fi, with no official server
+- **Your server, your control** — Nuphus does not provide an official relay; for remote access, deploy and configure your own `relay-server`
 
-Auto channel switching: on the same WiFi the phone connects to the desktop directly (fast, free); leaving the LAN automatically switches to the relay (stable, reliable); returning switches back.
+P2P and custom server connections remain optional user-controlled capabilities.
 
 ### Local-First, Private by Default
 
@@ -186,11 +187,12 @@ npx tauri dev
 
 ### Connect your phone
 
-1. On the desktop, enable the mobile service in the **Phone** settings page (default port 18772)
-2. Open the pairing page in your phone browser, enter the pairing password
-3. Add to Home Screen (PWA); use it like an app from then on
+1. Make sure the phone and desktop are on the same Wi-Fi LAN
+2. On the desktop, enable the local mobile service in the **Phone** settings page (default port 18772)
+3. Scan the LAN pairing code, or open the LAN address and enter the pairing password
+4. Add to Home Screen (PWA); use it like an app from then on
 
-Auto LAN direct connection on the same WiFi; automatic relay channel outside the LAN — zero config end to end.
+Only the local Wi-Fi LAN is used by default. The server address can be changed from the phone pairing page or **Network & Connections**; remote access requires your own deployed server.
 
 ---
 
@@ -221,12 +223,12 @@ Nuphus uses a six-layer architecture, security threaded through every layer:
 │  Phone PWA│ ←────────────────────────────────→  │ desktop mobile│
 │(chat/remote)│   POST /message shared entry        │ server(18772)│
 └──────────┘                                      └──────┬───────┘
-      ↕ LAN direct (auto on same WiFi)                   │ shared session/memory/state
-┌──────────┐                                      ┌──────┴───────┐
-│ Relay    │ ←──── remote channel (free) ────→    │  Nuphus      │
-│ server   │                                      │  desktop     │
-│ (no store)│                                     │  Agent engine │
-└──────────┘                                      └──────────────┘
+      ↕ Wi-Fi LAN direct (default)                        │ shared session/memory/state
+┌────────────────┐                                ┌──────┴───────┐
+│ Optional server │ ←── user configured ───────→ │  Nuphus      │
+│ (not official)  │                              │  desktop     │
+└────────────────┘                                │  Agent engine │
+                                                  └──────────────┘
 ```
 
 Phone messages go through `submit_user_message(source="mobile")`, sharing the same `leader_agent` / busy lock / dedup logic as the desktop — the two devices are **two views of one Agent**, not two separate systems. Disconnects auto-reconnect with exponential backoff and re-pull history to fill gaps; no messages are lost.

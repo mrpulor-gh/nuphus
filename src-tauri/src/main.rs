@@ -1198,10 +1198,9 @@ commands::set_raise_on_done,
             //    状态栏仅显示本轮真实启动且经门铃上报验证过的 agent ──
             crate::commands::config::handoff::reset_all_statuses_at_startup();
 
-            // ── 中继客户端：先确保配置就绪（官方默认开箱即用），再按 enabled 启动 ──
-            // 新用户首次使用免配置：缺失时写入官方中继默认值；自建中继已有配置则保留。
-            // 出站 WS 连中继服务器，收到任务走 submit_user_message 共享入口（source="relay"）。
-            // 断线指数退避重连。（2026-08 起 Pro 体系移除，远程访问对所有配对设备免费）
+            // ── 自定义服务端：当前官方中继暂时下线，仅按用户显式配置启动 ──
+            // ensure_default_config 会清退旧版官方地址并保留自建 relay-server 配置；
+            // 未配置服务端的用户只使用本地 mobile_server / 无线局域网直连。
             crate::relay_client::ensure_default_config();
             crate::relay_client::spawn_relay_loops(app.handle().clone());
 

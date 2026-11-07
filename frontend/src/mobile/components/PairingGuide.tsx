@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import { postPair, PairError } from '../api'
 import { t } from '../i18n'
+import ServerAddressControl from './ServerAddressControl'
 
 interface Props {
   /** true = 曾经配对但 token 被拒（已重置或失效） */
@@ -83,6 +84,7 @@ export default function PairingGuide({ invalid, onPair }: Props) {
       ) : (
         <p className="mobile-pair-desc">{t('mobile.pairDesc')}</p>
       )}
+      <ServerAddressControl />
       <ol className="mobile-pair-steps">
         <li>{t('mobile.pairStep1')}</li>
         <li>{t('mobile.pairStep2')}</li>

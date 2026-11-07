@@ -3,10 +3,10 @@
  *
  * 模式：
  * - lan：当前页面来自局域网地址（桌面 mobile_server 直连）——免费基础能力
- * - wan：当前页面来自外网地址（中继服务器 / 未来官方服务）——远程访问免费
+ * - wan：当前页面来自用户自建的服务端入口
  *
  * 判定依据：location.hostname 是否为私有网段。私有 = 桌面本机/局域网直连；
- * 非私有 = 经中继服务器访问（手机与桌面不在同一网络）。
+ * 非私有 = 经用户自行配置的服务端访问（手机与桌面不在同一网络）。
  */
 
 export type ConnectionMode = 'lan' | 'wan'
@@ -75,6 +75,17 @@ const RELAY_STORAGE_KEY = 'nuphus_relay_cfg'
 
 /** 缓存有效期：桌面 IP 可能随 WiFi 重连变化（DHCP），超过 TTL 视为过期，读取时自动丢弃。 */
 const RELAY_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const OFFICIAL_RELAY_HOSTS = new Set(['relay.nuphus.com', 'r.nuphus.com'])
+
+/** 当前产品阶段禁止把缓存或旧提示重新接到官方中继。 */
+export function isOfficialRelayUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/\.$/, '')
+    return OFFICIAL_RELAY_HOSTS.has(host)
+  } catch {
+    return false
+  }
+}
 
 interface RelayCache {
   lan_url?: string
@@ -97,6 +108,12 @@ function readCache(): RelayCache | null {
       localStorage.removeItem(RELAY_STORAGE_KEY)
       return null
     }
+    // 旧版手机可能在本机缓存过官方中继地址；升级后立即清除，
+    // 避免离线切换路径把用户重新接回已下线的官方线路。
+    if (parsed.relay_url && isOfficialRelayUrl(parsed.relay_url)) {
+      delete parsed.relay_url
+      localStorage.setItem(RELAY_STORAGE_KEY, JSON.stringify(parsed))
+    }
     return parsed
   } catch {
     return null
@@ -107,6 +124,9 @@ function readCache(): RelayCache | null {
 export function saveRelayCache(patch: RelayCache): void {
   try {
     const next = { ...readCache(), ...patch, ts: Date.now() }
+    if (next.relay_url && isOfficialRelayUrl(next.relay_url)) {
+      delete next.relay_url
+    }
     localStorage.setItem(RELAY_STORAGE_KEY, JSON.stringify(next))
   } catch {
     /* ignore */

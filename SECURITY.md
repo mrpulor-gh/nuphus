@@ -120,7 +120,8 @@ a compromised phone session.
 - **No transport encryption.** Because the channel is plain HTTP, an attacker
   who can sniff the LAN (e.g. hostile WiFi) can observe the token and session
   content in transit. Do not use the mobile server on untrusted networks. For
-  access beyond the local network, the relay channel is the intended path.
+  access beyond the local network, use a self-hosted relay server; the official
+  relay is temporarily unavailable.
 - **Pairing password hashing is a single-round salted SHA-256**, not a
   memory-hard KDF. It is adequate against casual inspection of the config file
   but is not designed to resist offline GPU cracking of a weak password. Choose
@@ -130,7 +131,7 @@ a compromised phone session.
 
 ### Relay server
 
-The official relay is a routing component, not storage. Per
+A user-deployed relay is a routing component, not storage. Per
 [`relay-usage-policy.md`](relay-usage-policy.md), it validates device/caller
 identity and forwards traffic; it does not persist, cache, or inspect session
 content. The relay tunnel carries its own `X-Relay-Token` and multi-tenant
