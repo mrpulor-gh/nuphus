@@ -226,6 +226,25 @@ describe('PreviewOverlay HTML 标注回流（P1）', () => {
     expect(screen.getByText(/120×24 @\(12,34\) dpr 1\.25/)).toBeInTheDocument()
   })
 
+  it('批注输入不被异步快照回流覆盖（IME 拼音重复回归）', () => {
+    // 回归（2026-11-07 大王报障）：输入框此前直接受控于 iframe 快照——每敲一个字符
+    // 走 onChange → postMessage → iframe setComment → 快照回流，回流前 React 会拿
+    // 滞后值重渲染 textarea，IME 组合期被反复重置（拼音字母重复、打不成句）。
+    // 修复后 value 以本地草稿为准，回流只在无草稿时提供初始值。
+    const iframe = renderHtmlPreview()
+    enterAnnotating(iframe)
+    dispatchMessage(PAYLOAD, iframe.contentWindow)
+
+    const input = commentInput(1)
+    fireEvent.change(input, { target: { value: '标' } })
+    fireEvent.change(input, { target: { value: '标注' } })
+    expect(commentInput(1).value).toBe('标注')
+
+    // 滞后快照回流（iframe 侧此刻仍是旧值/空值）不得把输入框重置
+    dispatchMessage(PAYLOAD, iframe.contentWindow)
+    expect(commentInput(1).value).toBe('标注')
+  })
+
   it('面板「放弃」按钮清空当前载荷', () => {
     const iframe = renderHtmlPreview()
     enterAnnotating(iframe)

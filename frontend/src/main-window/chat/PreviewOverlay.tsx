@@ -705,6 +705,13 @@ export function PreviewOverlay({
   const [annotating, setAnnotating] = useState(false)
   /** 批注输入焦点：指向列表项 textarea 的 ref map（P4 批注编辑迁到父窗口） */
   const commentRefs = useRef<Map<number, HTMLTextAreaElement | null>>(new Map())
+  /** 批注本地草稿（key = 标注项稳定键）。textarea 不能直接受控于 iframe 快照：
+   *  输入链路是 onChange → postMessage → iframe setComment → 快照回流，每个按键一次
+   *  异步往返；回流前 React 会拿滞后值重渲染 textarea，IME 组合期（拼音）被反复重置，
+   *  表现为字母重复、打不成句（2026-11-07 大王报障）。草稿本地同步更新，回流不覆盖。 */
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({})
+  /** IME 组合期闸门：组合中只写本地草稿，compositionend 再下发一次，减少无谓往返 */
+  const composingRef = useRef(false)
   /** 定位序列号：同一 selector 连续 ◎ 也让 iframe 侧动画重启 */
   const focusSeqRef = useRef(0)
   /** 快照条数与编辑态的 ref 镜像：message handler 只在挂载时注册一次，
@@ -747,8 +754,21 @@ export function PreviewOverlay({
     if (next) hudUpdate(t('preview.annotateEntered'), 'done')
   }
 
-  /** P4 批注回写：数据真正持有方是 iframe 侧 markers，这里只下发 + 由快照回流落库。 */
+  /** 标注项稳定键：selector + 矩形锚点 + 渲染序。
+   *  同一 selector 上可能有多条区域标注（rect 区分）；序号兜底同 rect 重复标注。 */
+  const annotationItemKey = (item: AnnotationItem, index: number) =>
+    `${item.css_selector || 'region'}|${item.rect.x},${item.rect.y},${item.rect.w},${item.rect.h}|${index}`
+
+  /** P4 批注回写：本地草稿先落地（textarea 的 value 唯一来源），再下发 iframe。
+   *  顺序不可反：iframe 快照是异步回流的，若拿它驱动 value，输入会被滞后数据覆盖。 */
   const handleCommentChange = (index: number, comment: string) => {
+    const item = annotations[index]
+    if (item) {
+      const key = annotationItemKey(item, index)
+      setCommentDrafts(prev => ({ ...prev, [key]: comment }))
+    }
+    // 组合期只更新本地，compositionend 的最终值再下发，避免每个拼音字母一次往返
+    if (composingRef.current) return
     sendAnnotateCommand(iframeRef.current, {
       type: 'nuphus:annotate-comment',
       index,
@@ -788,6 +808,7 @@ export function PreviewOverlay({
     annotationCountRef.current = 0
     annotatingRef.current = false
     commentRefs.current.clear()
+    setCommentDrafts({})
     readySeenRef.current = false
     clearReadyTimer()
     pathRef.current = path
@@ -945,6 +966,7 @@ export function PreviewOverlay({
     setRestoredCount(0)
     annotationCountRef.current = 0
     commentRefs.current.clear()
+    setCommentDrafts({})
     // 发送后清库：与 overlay 侧清markers 对齐，刷新不再恢复已处理的标注
     clearAnnotationStore(path)
     hudUpdate(t('preview.sentToInput', String(sent)), 'done')
@@ -968,6 +990,7 @@ export function PreviewOverlay({
     setRestoredCount(0)
     annotationCountRef.current = 0
     commentRefs.current.clear()
+    setCommentDrafts({})
     clearAnnotationStore(path)
   }
 
@@ -1044,9 +1067,9 @@ export function PreviewOverlay({
             <ul className="pv-annot-list">
               {annotations.map((item, i) => (
                 <li
-                  // key 用 selector 而非 index：删中间项后索引整体前移，用 index 会让
-                  // React 把上一个组件的 DOM/state 复用给下一条（批注串条、焦点跳位）
-                  key={item.css_selector || `idx-${i}`}
+                  // key 用稳定键（selector + 矩形 + 序号）：删中间项后 key 变化会重挂，
+                  // 但不会把上一条的 DOM/草稿复用到下一条（批注串条、焦点跳位）
+                  key={annotationItemKey(item, i)}
                   className="pv-annot-item"
                 >
                   <span className="pv-annot-index">{i + 1}</span>
@@ -1061,13 +1084,21 @@ export function PreviewOverlay({
                     </span>
                     <textarea
                       className="pv-annot-input"
-                      value={item.comment}
+                      // 本地草稿优先：iframe 快照只作初始值/外部恢复来源，输入期间不覆盖
+                      value={commentDrafts[annotationItemKey(item, i)] ?? item.comment}
                       placeholder={t('preview.annotationPlaceholder')}
                       aria-label={`${t('preview.annotationList')} ${i + 1}`}
                       ref={el => {
                         commentRefs.current.set(i, el)
                       }}
                       onChange={e => handleCommentChange(i, e.target.value)}
+                      onCompositionStart={() => {
+                        composingRef.current = true
+                      }}
+                      onCompositionEnd={e => {
+                        composingRef.current = false
+                        handleCommentChange(i, e.currentTarget.value)
+                      }}
                     />
                     <div className="pv-annot-item-actions">
                       <button
