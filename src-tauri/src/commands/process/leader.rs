@@ -262,9 +262,7 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
     // RunKind::Task：用户「接着干」是任务轮，仍需上下文预算与 85% 硬止损；
     // 只有提炼执行才传 RunKind::Refine（见 refine.rs）。
     let output = if resume {
-        runtime
-            .resume(message, cancel_flag, RunKind::Task)
-            .await
+        runtime.resume(message, cancel_flag, RunKind::Task).await
     } else {
         runtime.run(message, images, cancel_flag).await
     }

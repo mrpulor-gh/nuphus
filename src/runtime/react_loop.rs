@@ -587,9 +587,7 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
 
                     // 中断已请求：不再触发提炼大动作（马上从检查点收敛退出）——
                     // 「中断后又执行」治理（2026-10-28）。
-                    if ratio >= 0.85
-                        && !ctx_hard_stop_failed
-                        && !cancel_flag.load(Ordering::SeqCst)
+                    if ratio >= 0.85 && !ctx_hard_stop_failed && !cancel_flag.load(Ordering::SeqCst)
                     {
                         // 85% 硬止损：当场提炼 + 压缩 + 就地续跑（唯一接力点）。
                         // 独立于 force 线——force 线已被模型无视时（或单次暴涨

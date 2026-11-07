@@ -120,10 +120,7 @@ pub fn ensure_default_config() {
         cfg.url = DEFAULT_RELAY_URL.to_string();
         changed = true;
     }
-    if OFFICIAL_RELAY_AVAILABLE
-        && is_official_relay_url(&cfg.url)
-        && cfg.token.trim().is_empty()
-    {
+    if OFFICIAL_RELAY_AVAILABLE && is_official_relay_url(&cfg.url) && cfg.token.trim().is_empty() {
         // 官方凭据仅经构建期注入（env!：发布 CI 设环境变量 → 二进制内嵌）或运行时
         // 环境变量注入；均未注入则留空，用户自建中继在 relay_client.json 自行配置。
         let injected = env!("NUPHUS_RELAY_DEVICE_TOKEN").trim().to_string();
@@ -244,9 +241,7 @@ pub async fn relay_client_set_enabled(
         return Err("官方中继当前未提供，请配置自建服务端后再启用".into());
     }
     if enabled && !relay_loops_allowed(&cfg) {
-        return Err(
-            "服务端配置不完整（url/device_id/token），请先填写自建服务端信息".into(),
-        );
+        return Err("服务端配置不完整（url/device_id/token），请先填写自建服务端信息".into());
     }
     save_config(&cfg)?;
     if enabled {

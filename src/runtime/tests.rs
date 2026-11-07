@@ -760,12 +760,9 @@ fn refine_run_kind_skips_context_budget_and_never_reenters() {
     let mut runtime = runtime_for_refine_tests();
     runtime.set_session(high_watermark_session());
 
-    let output = tokio_test::block_on(runtime.resume(
-        "提炼提示",
-        &AtomicBool::new(false),
-        RunKind::Refine,
-    ))
-    .expect("resume 应正常返回");
+    let output =
+        tokio_test::block_on(runtime.resume("提炼提示", &AtomicBool::new(false), RunKind::Refine))
+            .expect("resume 应正常返回");
 
     assert!(output.success, "提炼轮应正常产出摘要");
     assert_eq!(
