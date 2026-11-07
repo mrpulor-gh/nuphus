@@ -4,6 +4,7 @@ use crate::emitter::CompoundEmitter;
 use crate::state::AppState;
 use nuphus::agent::distill::RefineStreamFilter;
 use nuphus::agent::events::{EventEmitter, NuphusEvent};
+use nuphus::runtime::RunKind;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -220,7 +221,9 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         let budget = refine_timeout_secs(&state, 180);
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(budget),
-            rt_owned.resume(refine_prompt, &cancel_flag),
+            // RunKind::Refine：提炼轮不参与上下文预算/85% 硬止损，也不触发
+            // session_end hook——避免「把 refine 当任务再 refine」的嵌套。
+            rt_owned.resume(refine_prompt, &cancel_flag, RunKind::Refine),
         )
         .await
         .map_err(|_| format!("提炼超时（{budget}s）"))

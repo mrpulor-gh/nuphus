@@ -7,7 +7,7 @@ use crate::agent::{AgentConfig, ReactAgent};
 use crate::annotation::store::AnnotationStore;
 use crate::api::ApiClient;
 use crate::permissions::ToolPermissions;
-use crate::runtime::Mode;
+use crate::runtime::{Mode, RunKind};
 use crate::session::Session;
 use crate::tools::ToolRegistry;
 use crate::{ExecutionStep, Result};
@@ -659,6 +659,10 @@ impl Runtime {
         let turn_id = self.agent.session.advance_turn();
         tracing::info!("[TURN] Advance to {}", turn_id);
 
+        // `refine_count` 仅用于日志诊断（不设次数上限）。新轮次归零，保持
+        // per-turn 语义，避免日志把生命周期累计值误当本轮次数。
+        self.agent.refine_count = 0;
+
         let effective_input = input.to_string();
 
         // Auto-inject annotations: match keywords in user input (injected once per round)
@@ -725,7 +729,7 @@ impl Runtime {
         // 替换/接力逻辑：force 线只做软劝导（模型自己收敛），turn-end
         // maybe_refine_session 正常 refine 兜底，均不接力（2026-10-25 定权）。
         let output = self
-            .react_loop(&effective_input, images, cancel_flag, false)
+            .react_loop(&effective_input, images, cancel_flag, false, RunKind::Task)
             .await?;
 
         // ExecutionCompleted is emitted by the orchestrator (process.rs), Runtime does not re-emit
@@ -743,10 +747,15 @@ impl Runtime {
     /// 效果：失败回合的全部进度（含已完成的工具调用）完整保留；
     /// turn id 不变 → 记忆持久化按 entry id 覆盖失败记录，无噪声；
     /// 0 进度失败时 session 末尾正是 user 消息，行为与重发等价（路径 1 的严格超集）。
+    ///
+    /// `kind` 区分执行身份：用户「接着干」传 [`RunKind::Task`]（仍需上下文预算
+    /// 与 85% 硬止损）；提炼执行传 [`RunKind::Refine`]（跳过预算检查，禁止
+    /// 提炼轮再触发提炼）。
     pub async fn resume(
         &mut self,
         goal: &str,
         cancel_flag: &AtomicBool,
+        kind: RunKind,
     ) -> Result<crate::AgentOutput> {
         let session_span = tracing::info_span!("session", session_id = %self.session().id);
         let _session_enter = session_span.enter();
@@ -769,7 +778,7 @@ impl Runtime {
         });
 
         // goal 作为 input 传入但不 push——供 wants_file_output 等回合级启发式使用
-        self.react_loop(goal, &None, cancel_flag, true).await
+        self.react_loop(goal, &None, cancel_flag, true, kind).await
     }
 
     /// 执行中提炼（in-loop refine）——**85% 硬止损专用**（2026-10-25 定权：
@@ -783,8 +792,8 @@ impl Runtime {
     ///
     /// 失败路径（超时 / API 错 / 空输出）**先调用后 commit**——truncate 回滚
     /// 注入的提示词消息，session 原样不动，返回 false 由调用方降级为硬劝导；
-    /// turn-end 正常 refine 兜底。同轮上限 [`MAX_IN_LOOP_REFINES`] 次，尝试即
-    /// 计数（含失败）：防「越线→尝试→超时失败→再越线→再尝试」烧穿超时预算。
+    /// turn-end 正常 refine 兜底。不设次数上限：提炼轮身份（RunKind::Refine）
+    /// 已从结构上禁止嵌套，任务轮每次越线都可正常提炼。
     ///
     /// 为什么必须在 85% 当场动作（而不是注入提示词等模型下一轮收敛）：
     /// 注入动作本身需要一次新请求，若越线时上下文已逼近上限，这次请求可能
@@ -793,18 +802,10 @@ impl Runtime {
     /// 摘要输出」用的最后安全空间。
     pub async fn refine_in_loop(&mut self, cancel_flag: &AtomicBool) -> bool {
         use crate::agent::distill::{
-            commit_in_loop_refine, RefineStreamFilter, MAX_IN_LOOP_REFINES,
-            REFINE_PROMPT_UNFINISHED,
+            commit_in_loop_refine, RefineStreamFilter, REFINE_PROMPT_UNFINISHED,
         };
 
-        if self.agent.refine_count >= MAX_IN_LOOP_REFINES {
-            tracing::info!(
-                "[REFINE] in-loop skipped: refine_count {} >= max {}",
-                self.agent.refine_count,
-                MAX_IN_LOOP_REFINES
-            );
-            return false;
-        }
+        // 计数器仅用于日志诊断，不再作为闸门（无次数上限）。
         self.agent.refine_count += 1;
 
         let before = self.agent.session.messages().len();
@@ -826,10 +827,13 @@ impl Runtime {
 
         // 墙钟预算 300s（本地端点预 fill 慢模型可能远超云端默认；此处只防
         // 「resume 整体挂死」，到点即回滚，不留半提炼状态）。
-        // Box::pin 断异步递归环：refine_in_loop → resume → react_loop → refine_in_loop。
+        //
+        // Box::pin 仅用于让 async fn 递归通过 Sized 检查，**不消除运行时栈帧**。
+        // 递归不会无界的原因不是它，而是取 RunKind::Refine：提炼轮整段跳过
+        // 85% 硬止损（react_loop），因此提炼轮内不可能再触发 refine_in_loop。
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(300),
-            Box::pin(self.resume(REFINE_PROMPT_UNFINISHED, cancel_flag)),
+            Box::pin(self.resume(REFINE_PROMPT_UNFINISHED, cancel_flag, RunKind::Refine)),
         )
         .await
         .map_err(|_| "提炼超时（300s）".to_string())

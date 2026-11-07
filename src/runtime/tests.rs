@@ -710,3 +710,187 @@ fn react_loop_in_loop_snapshot_captures_mid_loop_state() {
 
     crate::store::session::delete_session(&session_id).unwrap();
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// 提炼轮 / 任务轮身份分离回归（栈溢出 0xc00000fd）
+//
+// 旧机制：refine_in_loop → resume → react_loop 进入提炼轮后，85% 硬止损
+// 仍然生效 → 再次 refine_in_loop → 无界嵌套（每层实占一个栈帧）。
+// 新机制：react_loop 接 RunKind，RunKind::Refine 整段跳过上下文预算，
+// 提炼轮在结构上不可能再触发提炼。
+// ─────────────────────────────────────────────────────────────────────────
+
+/// 构造一个能解析出上下文窗口的 runtime（builtin registry 的 minimax/
+/// MiniMax-M3 = 250K；ctx 解析失败时测试会明确失败而不是静默跳过）。
+fn runtime_for_refine_tests() -> Runtime {
+    RuntimeBuilder::new()
+        .llm(make_mock_llm())
+        .tools(make_mock_tool_registry())
+        .config(RuntimeConfig {
+            agent_config: crate::agent::AgentConfig {
+                model: "MiniMax-M3".into(),
+                provider: "minimax".into(),
+                enable_memory: false,
+                max_iterations: 3,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .build()
+        .expect("build should succeed")
+}
+
+/// 10M 官方 input tokens：对任何常规窗口都远超 85% 硬线。
+fn high_watermark_session() -> Session {
+    let mut session = Session::new();
+    session.push_user("长会话上下文".to_string());
+    session.api_input_tokens = 10_000_000;
+    session
+}
+
+#[test]
+#[serial]
+fn refine_run_kind_skips_context_budget_and_never_reenters() {
+    assert!(
+        crate::agent::goal_types::try_get_context_window_for("MiniMax-M3", Some("minimax"))
+            .is_some(),
+        "测试前提：MiniMax-M3/minimax 必须能解析上下文窗口"
+    );
+
+    let mut runtime = runtime_for_refine_tests();
+    runtime.set_session(high_watermark_session());
+
+    let output = tokio_test::block_on(runtime.resume(
+        "提炼提示",
+        &AtomicBool::new(false),
+        RunKind::Refine,
+    ))
+    .expect("resume 应正常返回");
+
+    assert!(output.success, "提炼轮应正常产出摘要");
+    assert_eq!(
+        runtime.agent().refine_count,
+        0,
+        "RunKind::Refine 必须跳过上下文预算：提炼轮不得再触发 in-loop refine"
+    );
+}
+
+#[test]
+#[serial]
+fn task_run_at_high_watermark_refines_exactly_once() {
+    let mut runtime = runtime_for_refine_tests();
+    runtime.set_session(high_watermark_session());
+
+    let output = tokio_test::block_on(runtime.run("接着干", &None, &AtomicBool::new(false)))
+        .expect("run 应正常返回");
+
+    assert!(output.success, "任务轮应正常完成");
+    assert_eq!(
+        runtime.agent().refine_count,
+        1,
+        "任务轮高水位应只提炼一次；>1 说明提炼轮又触发了提炼（无界嵌套）"
+    );
+}
+
+#[test]
+#[serial]
+fn refine_in_loop_is_not_capped_by_refine_count() {
+    let mut runtime = runtime_for_refine_tests();
+    runtime.set_session(high_watermark_session());
+
+    // 旧上限为 10；这里用一个远超它的计数，确认已无次数闸门。
+    runtime.agent_mut().refine_count = 10_000;
+
+    let refined = tokio_test::block_on(runtime.refine_in_loop(&AtomicBool::new(false)));
+
+    assert!(refined, "refine_count 不再作为闸门：高计数时仍应正常提炼");
+    assert!(
+        runtime.agent().refine_count > 10_000,
+        "计数器仍递增（现仅用于日志诊断）"
+    );
+}
+
+/// 一次 run 内触发两次提炼的 mock：
+/// - 调用 1、3 是提炼轮 → 返回摘要文本
+/// - 调用 2 是任务轮 → 返回「超大 assistant 文本 + tool_use」，把上下文重新推过 85%
+/// - 调用 4 是任务轮 → 返回最终文本
+struct MultiRefineMock {
+    calls: Mutex<usize>,
+}
+
+#[async_trait]
+impl ApiClient for MultiRefineMock {
+    async fn stream(&self, _request: MessageRequest) -> crate::Result<Vec<AssistantEvent>> {
+        let n = {
+            let mut c = self.calls.lock().unwrap();
+            *c += 1;
+            *c
+        };
+        Ok(match n {
+            1 | 3 => vec![
+                AssistantEvent::TextDelta(format!("摘要{n}")),
+                AssistantEvent::MessageStop,
+            ],
+            2 => vec![
+                // 2MB 文本：refine 提交后官方 token 被清零，estimate_token_usage
+                // 按会话 JSON 字符数估算，足以再次越过 85% 硬线。
+                AssistantEvent::TextDelta("x".repeat(2_000_000)),
+                AssistantEvent::ToolUse {
+                    id: "inflate-1".to_string(),
+                    name: "mock_echo".to_string(),
+                    input: serde_json::json!({ "text": "x" }).to_string(),
+                },
+                AssistantEvent::MessageStop,
+            ],
+            _ => vec![
+                AssistantEvent::TextDelta("任务完成".to_string()),
+                AssistantEvent::MessageStop,
+            ],
+        })
+    }
+
+    fn model_name(&self) -> &str {
+        "MiniMax-M3"
+    }
+
+    fn provider_kind(&self) -> ProviderKind {
+        ProviderKind::MiniMax
+    }
+
+    fn provider_name(&self) -> &str {
+        "minimax"
+    }
+}
+
+#[test]
+#[serial]
+fn leader_refines_again_after_successful_refine_in_same_run() {
+    let mut runtime = RuntimeBuilder::new()
+        .llm(Arc::new(MultiRefineMock {
+            calls: Mutex::new(0),
+        }))
+        .tools(make_mock_tool_registry())
+        .config(RuntimeConfig {
+            agent_config: crate::agent::AgentConfig {
+                model: "MiniMax-M3".into(),
+                provider: "minimax".into(),
+                enable_memory: false,
+                max_iterations: 6,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .build()
+        .expect("build should succeed");
+    runtime.set_session(high_watermark_session());
+
+    let output = tokio_test::block_on(runtime.run("长任务", &None, &AtomicBool::new(false)))
+        .expect("run 应正常返回");
+
+    assert!(output.success, "任务轮应正常完成");
+    assert_eq!(
+        runtime.agent().refine_count,
+        2,
+        "同一 run 内第一次提炼成功后，上下文再次越线应能继续提炼；旧的 ctx_hard_stop_done 会永久挡住第二次"
+    );
+}

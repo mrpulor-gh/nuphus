@@ -4,6 +4,7 @@
 //! Runtime truly owns the execution loop, ReactAgent degrades to a pure state container.
 
 use super::tool_lifecycle::ToolEndGuard;
+use super::RunKind;
 use crate::agent::events::NuphusEvent;
 use crate::agent::prompt;
 use crate::agent::reminders::{ReminderCategory, ReminderPriority};
@@ -62,8 +63,14 @@ impl super::Runtime {
         images: &Option<Vec<String>>,
         cancel_flag: &AtomicBool,
         resume: bool,
+        kind: RunKind,
     ) -> crate::Result<crate::AgentOutput> {
-        tracing::info!("Agent starting task: {} (resume={})", input, resume);
+        tracing::info!(
+            "Agent starting task: {} (resume={}, kind={:?})",
+            input,
+            resume,
+            kind
+        );
 
         if let Some(factory) = &self.agent.client_factory {
             let registry = factory.registry()?;
@@ -381,9 +388,13 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
         //   turn 内（上限 1000 迭代）可能一次暴涨顶爆 API；85% 保留 15% 余量
         //   给「提炼请求 + 摘要输出」，越线当场提炼、压缩后从摘要就地续跑。
         //   此线不依赖模型自觉（模型不遵守 force 劝导时它是唯一兜底）。
+        // - 不设提炼次数上限：每次提炼成功、会话压缩后即进入新的上下文周期，
+        //   上下文再次涨回 85% 时可继续提炼——长任务无需切换 session。
+        //   `ctx_hard_stop_failed` 只用于「失败后本轮不再重试」，避免同一水位
+        //   紧循环重试烧穿 300s 超时预算。
         let mut ctx_warned = false;
         let mut ctx_force_warned = false;
-        let mut ctx_hard_stop_done = false;
+        let mut ctx_hard_stop_failed = false;
 
         // ── 轮中增量快照：进入循环前首刷一次 ──
         // 此刻 session 已含用户消息（上方 push_user），首次 LLM 请求尚未发出。
@@ -550,7 +561,11 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             //    就地续跑）。模型不遵守 force 劝导继续暴涨时，此线是最后兜底；
             //    85% 留出的 15% 余量正是提炼请求 + 摘要输出的安全空间。
             // 注入走 push_user_internal，不动系统提示前缀，不影响缓存命中。
-            {
+            //
+            // 提炼轮（RunKind::Refine）整段跳过：提炼本身就是在高水位下产出摘要，
+            // 若参与 85% 硬止损会再次触发提炼自己 → refine_in_loop 无界嵌套 →
+            // 每层实占一个栈帧 → tokio worker 栈溢出。任务轮才需要上下文预算。
+            if kind == RunKind::Task {
                 // 窗口解析走「与显示同源」的无 fallback 查询（2026-10-28）：查不到
                 // （即输入框分母 `--` 的同源场景）→ None → 跳过本块全部触发；
                 // 曾被 128K 兜底误判（1M 模型 302K 水位算成 236%）→ 错乱强制提炼
@@ -572,12 +587,16 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
 
                     // 中断已请求：不再触发提炼大动作（马上从检查点收敛退出）——
                     // 「中断后又执行」治理（2026-10-28）。
-                    if ratio >= 0.85 && !ctx_hard_stop_done && !cancel_flag.load(Ordering::SeqCst) {
+                    if ratio >= 0.85
+                        && !ctx_hard_stop_failed
+                        && !cancel_flag.load(Ordering::SeqCst)
+                    {
                         // 85% 硬止损：当场提炼 + 压缩 + 就地续跑（唯一接力点）。
                         // 独立于 force 线——force 线已被模型无视时（或单次暴涨
                         // 直接从线下越到 85%+），此处是最后一个不依赖模型自觉
-                        // 的动作点。ctx_hard_stop_done 保证本轮只硬切一次。
-                        ctx_hard_stop_done = true;
+                        // 的动作点。
+                        // 不设次数上限：提炼成功后复位软劝导闸门，上下文再次
+                        // 涨回阈值时可继续提炼（长会话无需切换 session）。
                         ctx_force_warned = true;
                         tracing::warn!(
                             "[REFINE] 85% hard stop: {}/{} tokens ({:.1}%) — in-loop refine",
@@ -585,9 +604,15 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             cw,
                             ratio * 100.0
                         );
-                        if !self.refine_in_loop(cancel_flag).await {
-                            // 提炼失败/达上限：降级硬劝导（一次性）——turn-end
-                            // 正常 refine 兜底，不 break（收敛与否交模型）。
+                        if self.refine_in_loop(cancel_flag).await {
+                            // 提炼成功 → 会话已压缩，进入新的上下文周期。
+                            ctx_warned = false;
+                            ctx_force_warned = false;
+                        } else {
+                            // 失败/超时/空摘要：本轮不再重试（避免同一水位紧循环
+                            // 烧 300s 预算），降级为一次性硬劝导；turn-end 正常
+                            // refine 仍兜底。
+                            ctx_hard_stop_failed = true;
                             self.agent.session.push_user_internal(format!(
                                 "⚠️ 上下文用量已达 {:.0}%（约 {}/{} tokens），自动提炼未生效。\
                                  请立即停止发起新的工具调用，基于当前已获得的信息输出最终回复，结束任务。",
@@ -1221,8 +1246,11 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         tracing::info!(
                             "Model output reasoning only after follow-up, using it as final text"
                         );
-                        if let Some(ref hooks) = self.agent.hooks {
-                            hooks.run_session_end(&self.agent.session.id, true, &display);
+                        // 提炼轮不是会话结束——不触发 session_end hook。
+                        if kind == RunKind::Task {
+                            if let Some(ref hooks) = self.agent.hooks {
+                                hooks.run_session_end(&self.agent.session.id, true, &display);
+                            }
                         }
                         // Leader completion: emit HudUpdate done + ExecutionCompleted + LeaderDone
                         if let Some(ref emitter) = self.agent.exec_emitter {
@@ -1273,8 +1301,11 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 self.agent.session.push_assistant(assistant_blocks);
                 self.agent.emit_exec(&display);
                 tracing::info!("Agent finished successfully");
-                if let Some(ref hooks) = self.agent.hooks {
-                    hooks.run_session_end(&self.agent.session.id, true, &display);
+                // 提炼轮不是会话结束——不触发 session_end hook。
+                if kind == RunKind::Task {
+                    if let Some(ref hooks) = self.agent.hooks {
+                        hooks.run_session_end(&self.agent.session.id, true, &display);
+                    }
                 }
                 // Leader completion: emit HudUpdate done + ExecutionCompleted + LeaderDone
                 if let Some(ref emitter) = self.agent.exec_emitter {
@@ -1934,8 +1965,10 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
 
         tracing::warn!("Max iterations reached");
 
-        if let Some(ref hooks) = self.agent.hooks {
-            hooks.run_session_end(&self.agent.session.id, false, "Max iterations reached");
+        if kind == RunKind::Task {
+            if let Some(ref hooks) = self.agent.hooks {
+                hooks.run_session_end(&self.agent.session.id, false, "Max iterations reached");
+            }
         }
         self.agent
             .session

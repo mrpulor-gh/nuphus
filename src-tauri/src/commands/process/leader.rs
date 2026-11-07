@@ -9,7 +9,7 @@ use nuphus::agent::events::EventEmitter;
 use nuphus::agent::goal_types::RelationConfig;
 use nuphus::agent::AgentConfig;
 use nuphus::permissions::ToolPermissions;
-use nuphus::runtime::{Mode, Runtime, RuntimeBuilder, RuntimeConfig};
+use nuphus::runtime::{Mode, RunKind, Runtime, RuntimeBuilder, RuntimeConfig};
 use nuphus::session::Session;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -259,8 +259,12 @@ pub(crate) async fn run_runtime_with_config<E: EventEmitter + Clone>(
     runtime.set_source(source);
 
     // 执行（resume=true 走断点续跑：不 advance_turn、不 push_user，见 Runtime::resume）
+    // RunKind::Task：用户「接着干」是任务轮，仍需上下文预算与 85% 硬止损；
+    // 只有提炼执行才传 RunKind::Refine（见 refine.rs）。
     let output = if resume {
-        runtime.resume(message, cancel_flag).await
+        runtime
+            .resume(message, cancel_flag, RunKind::Task)
+            .await
     } else {
         runtime.run(message, images, cancel_flag).await
     }

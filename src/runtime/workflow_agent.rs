@@ -16,6 +16,7 @@ use crate::agent::pause::PauseDecision;
 use crate::agent::reminders::{ReminderCategory, ReminderPriority, ReminderQueue};
 use crate::runtime::protection::ProtectionGuard;
 use crate::runtime::tool_lifecycle::ToolEndGuard;
+use crate::runtime::RunKind;
 use crate::{
     api::{ApiClient, AssistantEvent, MessageRequest},
     session::{ContentBlock, PromptSnapshot, Session},
@@ -95,6 +96,12 @@ pub struct WorkflowAgent {
     /// Session refine counter（turn-end maybe_refine_session 分档计数用；
     /// in-loop 注入不再计数——整体替换后 token 清零、消息归 1，天然不循环）
     pub(crate) refine_count: u32,
+    /// 执行身份（Task / Refine）。
+    ///
+    /// Refine 轮复用 `run()` 执行一次提炼，但整段跳过上下文预算（含 85% 硬止损）
+    /// 与 per-turn 计数重置——否则会形成 `refine_in_loop → run → 迭代循环 →
+    /// refine_in_loop` 的无界嵌套，每层实占一个栈帧，撑爆 tokio worker 栈。
+    pub(crate) run_kind: RunKind,
     /// Refine threshold (inherited from Runtime config, same as Leader)
     pub(crate) large_force_threshold: f64,
     /// Model label for prompt building
@@ -156,6 +163,7 @@ impl WorkflowAgent {
             execution_started_at: std::time::Instant::now(),
             turn_meta: crate::agent::turn_meta::TurnMeta::started(crate::utils::now_unix_ms()),
             refine_count: 0,
+            run_kind: RunKind::Task,
             large_force_threshold,
             model_label,
             supports_vision: false,
@@ -552,6 +560,11 @@ impl WorkflowAgent {
         self.inject_memory_snapshot();
         // Advance turn counter for memory tracking (consistent with Leader)
         self.session.advance_turn();
+        // refine_count 仅用于日志诊断（不设次数上限）：仅任务轮归零，保持
+        // per-turn 语义；提炼内部 run 继承外层计数。
+        if self.run_kind == RunKind::Task {
+            self.refine_count = 0;
+        }
         self.max_warning_injected = 0;
         self.user_terminated = false;
         self.pending_warnings.clear();
@@ -739,7 +752,9 @@ impl WorkflowAgent {
             // 2) 85% 绝对硬线：唯一保命线与**唯一接力点**——当场提炼（代码级
             //    禁工具）、accumulate 压缩后本迭代继续，任务从摘要接续。
             // 未越线维持原有渐进警告（inject_context_warning）与 FORBID break 语义。
-            {
+            // 提炼轮（RunKind::Refine）整段跳过上下文预算：提炼本身就在高水位下
+            // 产出摘要，若参与 85% 硬止损会再次触发提炼自己 → 无界嵌套 → 栈溢出。
+            if self.run_kind == RunKind::Task {
                 if let Some(ctx_window) = crate::agent::goal_types::try_get_context_window_for(
                     self.llm.model_name(),
                     Some(self.llm.provider_name()),
@@ -749,11 +764,10 @@ impl WorkflowAgent {
                     let usage = self.session.context_watermark();
                     if usage > 0 {
                         let ratio = usage as f64 / ctx_window as f64;
-                        let can_hard_stop =
-                            self.refine_count < crate::agent::distill::MAX_IN_LOOP_REFINES;
-                        if ratio >= 0.85 && can_hard_stop {
+                        // 不设提炼次数上限：RunKind::Refine 已从结构上禁止嵌套。
+                        if ratio >= 0.85 {
                             // 85% 硬止损：当场提炼 + 压缩 + 就地续跑（唯一接力点）。
-                            // 提炼失败/达上限 → 降级渐进警告 / FORBID break（衔接老语义）。
+                            // 提炼失败 → 降级渐进警告 / FORBID break（衔接老语义）。
                             tracing::warn!(
                                 "[REFINE] workflow 85% hard stop: {}/{} ({:.1}%) — in-loop refine",
                                 usage,
@@ -1744,25 +1758,17 @@ impl WorkflowAgent {
     ///
     /// 失败（超时 / API 错 / 空输出）：truncate 回滚提示词消息，session 原样
     /// 不动，返回 false 由调用方降级到渐进警告（inject_context_warning）兜底。
-    /// 同轮上限 [`MAX_IN_LOOP_REFINES`] 次，尝试即计数（含失败）。
+    /// 不设次数上限：提炼轮身份已从结构上禁止嵌套。
     ///
     /// 为什么必须在 85% 当场动作（而不是注入提示词等下一轮收敛）：注入依赖
     /// 下一次请求被读到，若上下文已逼近上限，该请求可能直接 TooLong（不可
     /// 重试）——85% 留出的 15% 余量正是提炼请求 + 摘要输出的安全空间。
     async fn refine_in_loop(&mut self, cancel_flag: &AtomicBool) -> bool {
         use crate::agent::distill::{
-            commit_in_loop_refine, RefineStreamFilter, MAX_IN_LOOP_REFINES,
-            REFINE_PROMPT_UNFINISHED,
+            commit_in_loop_refine, RefineStreamFilter, REFINE_PROMPT_UNFINISHED,
         };
 
-        if self.refine_count >= MAX_IN_LOOP_REFINES {
-            tracing::info!(
-                "[REFINE] workflow in-loop skipped: refine_count {} >= max {}",
-                self.refine_count,
-                MAX_IN_LOOP_REFINES
-            );
-            return false;
-        }
+        // 计数器仅用于日志诊断，不再作为闸门（无次数上限）。
         self.refine_count += 1;
 
         let before = self.session.messages().len();
@@ -1779,7 +1785,11 @@ impl WorkflowAgent {
         if let Some(ref e) = saved {
             self.set_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
         }
-        // Box::pin 断异步递归环：refine_in_loop → run → 迭代循环 → refine_in_loop。
+        // 提炼轮身份：run 内整段跳过上下文预算/85% 硬止损，从结构上禁止嵌套提炼。
+        let prev_kind = self.run_kind;
+        self.run_kind = RunKind::Refine;
+        // Box::pin 仅用于让 async fn 递归通过 Sized 检查，不消除运行时栈帧；
+        // 递归不会无界的原因是 RunKind::Refine 让提炼轮跳过 85% 硬止损。
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(300),
             Box::pin(self.run(REFINE_PROMPT_UNFINISHED, &None, cancel_flag)),
@@ -1787,6 +1797,7 @@ impl WorkflowAgent {
         .await
         .map_err(|_| "提炼超时（300s）".to_string())
         .and_then(|r| r.map_err(|e| e.to_string()));
+        self.run_kind = prev_kind;
         self.set_internal_input(false);
         self.tools_suppressed = false;
         let _ = self.take_emitter();
