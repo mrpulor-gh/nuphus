@@ -108,8 +108,7 @@ export function MobilePage() {
     relay?.state?.tunnel?.status === 'connected'
   const customServerRetrying =
     customServerOn &&
-    (relay?.state?.relay?.status === 'retrying' ||
-      relay?.state?.tunnel?.status === 'retrying')
+    (relay?.state?.relay?.status === 'retrying' || relay?.state?.tunnel?.status === 'retrying')
   const customServerFault =
     customServerOn &&
     (relay?.state?.relay?.status === 'fault' || relay?.state?.tunnel?.status === 'fault')

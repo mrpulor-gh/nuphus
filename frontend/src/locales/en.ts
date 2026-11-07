@@ -2071,8 +2071,7 @@ const en: Record<string, string> = {
   'mobile.copyLocalLink': 'Copy local link',
   'mobile.lanFallbackTitle': 'LAN direct (fallback)',
   'mobile.lanFallbackDesc': 'Same Wi-Fi only:',
-  'mobile.lanFallbackNote':
-    'The local address only works on the same Wi-Fi LAN',
+  'mobile.lanFallbackNote': 'The local address only works on the same Wi-Fi LAN',
   'mobile.pairPassword': 'Pairing password',
   'mobile.pairPasswordUnsetHint': 'Not set; phones pair with this password once set',
   'mobile.pairPasswordSetHint': 'Set; paired phones must re-enter the password after a change',
@@ -2638,8 +2637,7 @@ const en: Record<string, string> = {
   'mobile.serverAddressLabel': 'Server page address',
   'mobile.serverAddressCollapse': 'Collapse',
   'mobile.serverAddressExpand': 'Change',
-  'mobile.serverAddressPlaceholder':
-    'http://192.168.1.10:18772 or https://relay.example.com',
+  'mobile.serverAddressPlaceholder': 'http://192.168.1.10:18772 or https://relay.example.com',
   'mobile.serverAddressOpen': 'Open',
   'mobile.serverAddressHint':
     'Use the desktop LAN address on the same Wi-Fi. For remote access, enter the relay-server endpoint you deploy. ws:// and wss:// addresses are also accepted.',

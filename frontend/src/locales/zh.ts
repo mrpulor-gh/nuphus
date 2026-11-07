@@ -1898,7 +1898,8 @@ const zh: Record<string, string> = {
   'mobile.routeRelayDesc': '直连不上时自动走官方中继，出门在外也能访问这台电脑',
   'mobile.routeRelayBadge': '兜底',
   'mobile.routeVpsTitle': '自定义服务端',
-  'mobile.routeVpsDesc': '可选：连接你自行部署的 relay-server，用于异地远程访问；留空则只使用无线局域网',
+  'mobile.routeVpsDesc':
+    '可选：连接你自行部署的 relay-server，用于异地远程访问；留空则只使用无线局域网',
   'mobile.routeVpsBadge': '支持',
   'mobile.routeStateOn': '可用',
   'mobile.routeStateOff': '未开启',
@@ -2495,8 +2496,7 @@ const zh: Record<string, string> = {
   'mobile.serverAddressLabel': '服务端页面地址',
   'mobile.serverAddressCollapse': '收起',
   'mobile.serverAddressExpand': '修改',
-  'mobile.serverAddressPlaceholder':
-    'http://192.168.1.10:18772 或 https://relay.example.com',
+  'mobile.serverAddressPlaceholder': 'http://192.168.1.10:18772 或 https://relay.example.com',
   'mobile.serverAddressOpen': '打开',
   'mobile.serverAddressHint':
     '同一 Wi-Fi 默认使用电脑局域网地址；异地访问填写你自行部署的 relay-server 入口。也兼容粘贴 ws:// 或 wss:// 地址。',

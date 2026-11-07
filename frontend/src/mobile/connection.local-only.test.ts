@@ -30,7 +30,7 @@ describe('local-only relay cache', () => {
         lan_url: 'http://192.168.1.23:18772',
         relay_url: 'https://relay.nuphus.com/?device=desktop-1',
         ts: Date.now(),
-      })
+      }),
     )
 
     expect(getCachedRelayUrl()).toBeNull()

@@ -12,10 +12,7 @@ interface Props {
   onNavigated?: () => void
 }
 
-export default function ServerAddressControl({
-  defaultExpanded = false,
-  onNavigated,
-}: Props) {
+export default function ServerAddressControl({ defaultExpanded = false, onNavigated }: Props) {
   const currentUrl = useMemo(() => getCurrentMobileServerUrl(), [])
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [value, setValue] = useState(() => getPreferredMobileServerUrl())
@@ -38,7 +35,7 @@ export default function ServerAddressControl({
       setError(
         e instanceof Error && e.message === 'empty'
           ? t('mobile.serverAddressEmpty')
-          : t('mobile.serverAddressInvalid')
+          : t('mobile.serverAddressInvalid'),
       )
     }
   }
