@@ -21,12 +21,14 @@ import {
   IconBookOpen,
   IconBot,
   IconBrowser,
+  IconCheck,
   IconChevronDown,
   IconChevronRight,
   IconChevronUp,
   IconClock3,
   IconFolder,
   IconGrip,
+  IconLoader2,
   IconPaperclip,
   IconPlus,
   IconPuzzle,
@@ -67,6 +69,7 @@ import { useStickyScroll } from '../../hooks/useStickyScroll'
 import type { ModelInfo, ProjectBookmark, SideChatHistoryEntry } from '../lib/api'
 import type { ChatReference } from '../../core/types'
 import { formatTokens } from '../../ui/tokenFormat'
+import { formatToolParams } from '../../ui/toolParams'
 import './side-chat.css'
 
 /**
@@ -112,6 +115,10 @@ interface SideChatMessage {
   thinking?: string
   /** 失败提示单独成样式，避免和正常回复混淆 */
   error?: boolean
+  /** 失败的可操作建议（由 explainSideChatError 生成，随 error 消息一起落） */
+  errorHint?: string
+  /** 原始错误详情：默认折叠，只给需要排查的人看 */
+  errorDetail?: string
   /** 执行中追加的消息：已入队、尚未被迭代边界消费。
    *  渲染成半透明气泡 + 「已入队」角标，收到 append_queue_updated 后转 normal。 */
   queued?: boolean
@@ -127,6 +134,23 @@ interface SideChatMessage {
   /** 消息来源：Leader 经后端通道派发的 brief（伙伴窗口显式展示派发任务，
    *  避免派发轮对用户是黑盒）。普通用户轮次无此字段。 */
   from?: 'leader_dispatch'
+}
+
+/** 失败归因分类：只做「原因 + 下一步」，原始错误串另存折叠详情。
+ *  分类与后端 `is_retryable_llm_error` 的不可重试清单对齐——余额/鉴权类重发无意义。 */
+export type SideChatErrorKind =
+  'balance' | 'auth' | 'forbidden' | 'rate' | 'timeout' | 'network' | 'context' | 'generic'
+
+export function explainSideChatError(detail: string): SideChatErrorKind {
+  const d = detail.toLowerCase()
+  if (/402|insufficient|balance|quota|credit|payment/.test(d)) return 'balance'
+  if (/401|unauthorized|invalid api key|invalid_api_key|incorrect api key/.test(d)) return 'auth'
+  if (/403|forbidden/.test(d)) return 'forbidden'
+  if (/429|rate limit|too many requests/.test(d)) return 'rate'
+  if (/timeout|timed out/.test(d)) return 'timeout'
+  if (/connect|network|dns|tls|econn|socket/.test(d)) return 'network'
+  if (/context length|too long|max tokens/.test(d)) return 'context'
+  return 'generic'
 }
 
 /** 输入区附件 chip：name 显示、path 注入（`[附件: path]` 文本行） */
@@ -154,8 +178,6 @@ interface LiveToolEntry {
   ok?: boolean
   /** 工具调用耗时（ms），来自 tool_call_end 事件的 duration_ms；未知则为 undefined */
   durationMs?: number
-  /** 在途动态计时的起点（Date.now()）：结束后由 durationMs 接替显示 */
-  startedAt?: number
 }
 
 /** 流式文本有序分段：思考 / 正文按到达顺序排列（迭代间不合并、不跨类型
@@ -175,13 +197,6 @@ function formatDuration(ms: number | undefined): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
-/** 在途动态计时：从 startedAt 到当前时刻的毫秒数（无起点返回 undefined）。
- *  由 200ms tick 触发重渲染驱动「走动」——结束后由 durationMs 静态值接替。 */
-function elapsedMs(startedAt: number | undefined, now: number): number | undefined {
-  if (typeof startedAt !== 'number' || !Number.isFinite(startedAt)) return undefined
-  return Math.max(0, now - startedAt)
-}
-
 /** 一轮内**按时间顺序**的块：正文 / 思考 / 工具调用交替出现。
  *  与 `steps` 的分工：steps 是集合（只有用了什么），块序列保留「这一步发生在
  *  哪段话之后」——这是把工具块渲染回流式位置的唯一依据。 */
@@ -192,10 +207,11 @@ type LiveBlock =
       kind: 'tool'
       tool: string
       summary: string
+      /** 原始参数：执行过程按移动端口径渲染 command / cwd / path 等定位字段 */
+      params?: unknown
       ok?: boolean
       callId?: string
       durationMs?: number
-      startedAt?: number
     }
 
 /** 落盘用的块：正文只存**字符区间**（指向 `msg.text`），不与正文重复占存储。
@@ -870,11 +886,11 @@ function SideChatPanelImpl({
             return next
           })
           // 轨迹只追加、永不移除：end 只改状态，状态行因此始终有内容可显示
-          setToolTrace(prev => [...prev, { callId, tool, summary, startedAt: Date.now() }])
+          setToolTrace(prev => [...prev, { callId, tool, summary }])
           // 块序列：工具调用按发生顺序落到当前位置（前面的正文块自然被封口）
           const nextBlocks: LiveBlock[] = [
             ...liveBlocksRef.current,
-            { kind: 'tool', tool, summary, callId, startedAt: Date.now() },
+            { kind: 'tool', tool, summary, params: e.params, callId },
           ]
           liveBlocksRef.current = nextBlocks
           setLiveBlocks(nextBlocks)
@@ -1372,9 +1388,16 @@ function SideChatPanelImpl({
       setInput(text)
       setAttachments(sentAttachments)
       setSkills(sentSkills)
+      const kind = explainSideChatError(detail)
       setMessages(prev => [
         ...prev,
-        { role: 'assistant', text: `${t('sideChat.failed')}: ${detail}`, error: true },
+        {
+          role: 'assistant',
+          text: t(`sideChat.error.${kind}.title`),
+          error: true,
+          errorHint: t(`sideChat.error.${kind}.hint`),
+          errorDetail: detail,
+        },
       ])
     } finally {
       // 降级为追加时轮次仍在途：sending / 实时过程 / 待入队区必须原样保持，
@@ -1678,17 +1701,6 @@ function SideChatPanelImpl({
     return best
   }, [activeCalls])
 
-  /** 在途动态计时的时钟：sending 期间每 200ms 触发一次重渲染，让在途工具的
-   *  elapsed 走动；空闲停表。用 useMemo 取时刻——tick 变才重取，避免每次
-   *  渲染 Date.now() 漂移导致的同帧多值。 */
-  const [nowTick, setNowTick] = useState(0)
-  useEffect(() => {
-    if (!sending) return
-    const id = window.setInterval(() => setNowTick(n => n + 1), 200)
-    return () => window.clearInterval(id)
-  }, [sending])
-  const nowMs = useMemo(() => Date.now(), [nowTick])
-
   /** 状态行显示哪个工具：在途的优先；在途窗口被合批吞掉时退到本轮最后一个
    *  （带 ✓/✗），同样回答「刚刚用了什么工具」。仅在最近事件是工具时才显示——
    *  否则先到的思考/正文会把工具行一直占着。 */
@@ -1697,7 +1709,6 @@ function SideChatPanelImpl({
     summary: string
     ok?: boolean
     durationMs?: number
-    startedAt?: number
   } | null = latestCall
     ? { tool: latestCall.tool, summary: latestCall.summary }
     : lastLiveKind === 'tool' && toolTrace.length > 0
@@ -2066,7 +2077,18 @@ function SideChatPanelImpl({
                     )}
                     {/* 助手回复走 Markdown 渲染（与主会话同一组件）；用户消息与
                        错误提示保持纯文本——附件行 / 错误串不该被 Markdown 解释。 */}
-                    {msg.role === 'assistant' && !msg.error ? (
+                    {msg.role === 'assistant' && msg.error ? (
+                      <div className="scp-error">
+                        <div className="scp-error-title">{msg.text}</div>
+                        {msg.errorHint && <div className="scp-error-hint">{msg.errorHint}</div>}
+                        {msg.errorDetail && (
+                          <details className="scp-error-detail">
+                            <summary>{t('sideChat.errorDetail')}</summary>
+                            <code>{msg.errorDetail}</code>
+                          </details>
+                        )}
+                      </div>
+                    ) : msg.role === 'assistant' ? (
                       <MarkdownContent content={msg.text} />
                     ) : (
                       msg.text
@@ -2146,25 +2168,36 @@ function SideChatPanelImpl({
                           {headCall && headCall.n > 1 ? headCall.call.summary : shownTool.summary}
                         </span>
                       )}
-                      {/* 尾部 meta：状态与计时合并为一组跟随内容尾部。在途显示
-                        动态计时（startedAt 起算，随 200ms tick 走动），结束后
-                        切换为成败 + 事件带回的静态耗时。 */}
+                      {/* 尾部 meta：与移动端执行过程弹窗同口径——在途旋转图标，
+                        结束后成功 / 失败图标 + 事件带回的耗时。 */}
                       <span className="scp-live-tool-meta">
-                        {shownTool.ok !== undefined ? (
-                          <>
-                            <span
-                              className={`scp-live-tool-state${shownTool.ok ? '' : ' is-failed'}`}
-                            >
-                              {shownTool.ok ? t('sideChat.toolOk') : t('sideChat.toolFail')}
-                            </span>
-                            <span className="scp-live-tool-duration">
-                              {shownTool.durationMs != null && formatDuration(shownTool.durationMs)}
-                            </span>
-                          </>
+                        {shownTool.ok === undefined ? (
+                          <IconLoader2
+                            size={13}
+                            className="scp-live-tool-spin"
+                            aria-label={t('sideChat.toolRunning')}
+                          />
                         ) : (
-                          <span className="scp-live-tool-duration is-live">
-                            {formatDuration(elapsedMs(shownTool.startedAt, nowMs))}
-                          </span>
+                          <>
+                            {shownTool.ok ? (
+                              <IconCheck
+                                size={13}
+                                className="is-ok"
+                                aria-label={t('sideChat.toolOk')}
+                              />
+                            ) : (
+                              <IconX
+                                size={13}
+                                className="is-fail"
+                                aria-label={t('sideChat.toolFail')}
+                              />
+                            )}
+                            {shownTool.durationMs != null && (
+                              <span className="scp-live-tool-duration">
+                                ({formatDuration(shownTool.durationMs)})
+                              </span>
+                            )}
+                          </>
                         )}
                       </span>
                     </>
@@ -2182,7 +2215,8 @@ function SideChatPanelImpl({
               {!liveCollapsed && (
                 <div className="scp-live-content">
                   {/* 交错渲染：工具块落在它发生时的正文位置，而不是全部堆到末尾。
-                     思考块弱化斜体，正文块常规色——与 streamSegments 的上色规则一致。 */}
+                     样式对齐移动端执行过程弹窗：思考为次级色、正文为主色，
+                     工具行为「工具名 + 参数代码块 + 状态图标 + 耗时」。 */}
                   {liveBlocks.length > 0 ? (
                     <div className="scp-timeline is-live">
                       {liveBlocks.map((b, i) => {
@@ -2200,34 +2234,39 @@ function SideChatPanelImpl({
                             </div>
                           )
                         }
+                        const paramsText = formatToolParams(b.params) || b.summary
                         return (
-                          <div
-                            className={`scp-tl-tool${b.ok === false ? ' is-failed' : ''}${
-                              b.ok === undefined ? ' is-running' : ''
-                            }`}
-                            key={i}
-                          >
-                            <span className="scp-tl-dot" aria-hidden="true" />
-                            <span className="scp-tl-tool-name">{b.tool}</span>
-                            {b.summary && <span className="scp-tl-tool-summary">{b.summary}</span>}
-                            {/* 尾部 meta：状态 + 计时一组跟随块尾。在途 = 动态计时
-                               （startedAt + nowMs，tick 驱动走动）；结束 = 成败 +
-                               durationMs 静态值。命令与路径在 summary 里完整换行，
-                               不做前端截断——截断会埋掉定位信息。 */}
-                            <span className="scp-tl-meta">
-                              <span className={`scp-tl-state${b.ok === false ? ' is-failed' : ''}`}>
-                                {b.ok === undefined
-                                  ? t('sideChat.toolRunning')
-                                  : b.ok
-                                    ? t('sideChat.toolOk')
-                                    : t('sideChat.toolFail')}
-                              </span>
+                          <div className="scp-tl-tool" key={i}>
+                            <div className="scp-tl-tool-main">
+                              <span className="scp-tl-tool-name">{b.tool}</span>
+                              {paramsText && (
+                                <code className="scp-tl-tool-params">{paramsText}</code>
+                              )}
+                            </div>
+                            {b.ok === undefined ? (
+                              <IconLoader2
+                                size={13}
+                                className="scp-tl-spin"
+                                aria-label={t('sideChat.toolRunning')}
+                              />
+                            ) : b.ok ? (
+                              <IconCheck
+                                size={13}
+                                className="is-ok"
+                                aria-label={t('sideChat.toolOk')}
+                              />
+                            ) : (
+                              <IconX
+                                size={13}
+                                className="is-fail"
+                                aria-label={t('sideChat.toolFail')}
+                              />
+                            )}
+                            {b.ok !== undefined && b.durationMs != null && (
                               <span className="scp-tl-duration">
-                                {formatDuration(
-                                  b.ok === undefined ? elapsedMs(b.startedAt, nowMs) : b.durationMs,
-                                )}
+                                ({formatDuration(b.durationMs)})
                               </span>
-                            </span>
+                            )}
                           </div>
                         )
                       })}
@@ -2302,7 +2341,7 @@ function SideChatPanelImpl({
               z-index:10 + bottom:10px（CSS）：盖在 live bar（z-index:6）之上、
               略离视口底、压条的上沿——实色底+投影读作浮层芯片。
               sending 是后端 slot.running 的前端镜像——它真才显示，绝不伪造活跃。 */}
-          {liveActive && (
+          {sending && liveActive && (
             <span className="scp-running" role="status">
               <span className="scp-running-dot" aria-hidden="true" />
               <span className="scp-running-text">Running..</span>

@@ -1117,11 +1117,23 @@ async fn side_chat_send_impl<R: tauri::Runtime>(
             }
         }
     }
+    // 失败轮的已执行步骤只能从会话历史复原：`run_free` 的错误路径只回传错误串，
+    // 不带 steps（成功路径同样回传空数组），归档若照旧写 [] 就查不到"失败前做过什么"。
+    // 必须在 drop(guard) 之前取——执行体归宿后就拿不到 session 了。
+    let failed_steps = if outcome.is_err() {
+        guard
+            .runner
+            .as_ref()
+            .map(|runner| steps_from_session(runner.session()))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     // 显式归宿（紧随执行结束）：后续发送立刻能复用，不必等本函数返回
     drop(guard);
 
     // 执行归档（对话历史）：成功 / 失败 / 中断都记一条，失败不阻断返回。
-    archive_after_turn(message, model_ref, &outcome).await;
+    archive_after_turn(message, model_ref, &outcome, failed_steps).await;
 
     match outcome {
         Ok((success, reply, steps)) => {
@@ -2888,12 +2900,32 @@ pub async fn side_chat_history_delete(id: String) -> Result<(), String> {
         .map_err(|e| format!("写入归档失败: {e}"))
 }
 
+/// 失败轮的步骤快照：session 里已发生的 `ToolUse` 块即事实（工具确实被调过）。
+/// 失败轮无法逐条确认执行结果，`ok` 统一记 false（未确认）；归档价值在于能重建
+/// 「失败前它调过哪些工具、参数是什么」。
+fn steps_from_session(session: &nuphus::session::Session) -> Vec<Value> {
+    let mut steps = Vec::new();
+    for message in session.messages() {
+        for block in &message.content {
+            if let nuphus::session::ContentBlock::ToolUse { name, input, .. } = block {
+                steps.push(json!({
+                    "tool": name,
+                    "ok": false,
+                    "summary": step_summary(input),
+                }));
+            }
+        }
+    }
+    steps
+}
+
 /// 一轮结束后写归档：question / reply / steps / 是否成功 / 使用模型。
 /// 失败（中断、LLM 错误）也归档，`ok=false` —— 事后才能分辨「它当时是挂了还是没跑」。
 async fn archive_after_turn(
     question: &str,
     model: Option<&str>,
     outcome: &Result<(bool, String, Vec<nuphus::ExecutionStep>), String>,
+    failed_steps: Vec<Value>,
 ) {
     let (ok, reply, steps): (bool, String, Value) = match outcome {
         Ok((success, reply, steps)) => (
@@ -2901,7 +2933,7 @@ async fn archive_after_turn(
             normalize_reply(reply),
             json!(steps_payload(steps)),
         ),
-        Err(e) => (false, format!("执行失败: {e}"), json!([])),
+        Err(e) => (false, format!("执行失败: {e}"), json!(failed_steps)),
     };
     let entry = SideChatHistoryEntry {
         id: uuid::Uuid::new_v4().to_string(),

@@ -1062,8 +1062,39 @@ describe('SideChatPanel 渲染行为', () => {
       target: { value: '在吗' },
     })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
-    await waitFor(() => expect(screen.getByText(/临时伙伴执行失败: 网络断了/)).toBeTruthy())
+    // 失败气泡给可读原因（归因），原始错误串收进折叠的诊断详情
+    await waitFor(() => expect(screen.getByText('本轮执行失败')).toBeTruthy())
+    expect(screen.getByText(/网络断了/)).toBeTruthy()
     expect(sideChatSend).toHaveBeenCalledTimes(1)
+  })
+
+  it('402 余额不足：给出可执行原因，而不是 402 + 英文 JSON', async () => {
+    sideChatSend.mockRejectedValue(
+      new Error('LLM error: API error 402: {"error":{"message":"Insufficient Balance"}}'),
+    )
+    renderPanel()
+    fireEvent.change(screen.getByLabelText('创意方案 · 探索调研 · 临时任务 · 核对审计…'), {
+      target: { value: '在吗' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    await waitFor(() => expect(screen.getByText('模型账户余额不足')).toBeTruthy())
+    expect(screen.getByText(/充值/)).toBeTruthy()
+    // 原始串仍可查（折叠），但不再是主文案
+    expect(screen.getByText(/Insufficient Balance/)).toBeTruthy()
+  })
+
+  it('轮次完成后 Running 指示不残留（sending 门控）', async () => {
+    // 回归（2026-11-07 大王报障）：pill 原先只看 liveActive（activeCalls/streamSegments/
+    // toolTrace 的派生值）。轮次结束 finally 虽清空这些状态，但迟到的 side-chat-event
+    // 会把任一状态重新写活，pill 就永远挂在左下角。渲染必须同时要求 sending。
+    sideChatSend.mockResolvedValue({ reply: '完成' })
+    renderPanel()
+    fireEvent.change(screen.getByLabelText('创意方案 · 探索调研 · 临时任务 · 核对审计…'), {
+      target: { value: '在吗' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    await waitFor(() => expect(screen.getByText('完成')).toBeTruthy())
+    expect(screen.queryByText('Running..')).toBeNull()
   })
 
   it('权限固定开启：面板无任何开关，发送恒带 fileAccess/webSearch=true', async () => {
@@ -1223,11 +1254,9 @@ describe('SideChatPanel 渲染行为', () => {
     })
     // tool_call_end：在途集合清空，但轨迹保留（状态行继续显示最后一个工具 + 成败与耗时，
     // 不再回落到「思考中」——同步工具的在途窗口可能被合批吞掉，痕迹是唯一证据）
-    await waitFor(() =>
-      expect(document.querySelector('.scp-live-tool-state')?.textContent).toBe('成功'),
-    )
-    // 耗时取事件里的 duration_ms（12ms < 1s → 显示 ms）
-    expect(document.querySelector('.scp-live-tool-duration')?.textContent).toBe('12ms')
+    await waitFor(() => expect(document.querySelector('.scp-live-tool-meta .is-ok')).toBeTruthy())
+    // 耗时取事件里的 duration_ms（12ms < 1s → 显示 ms），括号与移动端弹窗同款
+    expect(document.querySelector('.scp-live-tool-duration')?.textContent).toBe('(12ms)')
 
     // 结算：实时态整体清空（迟到的过程事件不再渲染）
     await act(async () => {
@@ -1402,8 +1431,8 @@ describe('SideChatPanel 渲染行为', () => {
     // 在途集合已空，但轨迹还在：工具名 + 摘要 + 完成标记 + 耗时都必须可见
     expect(screen.getAllByText('Read').length).toBeGreaterThan(0)
     expect(screen.getAllByText('src/main.rs').length).toBeGreaterThan(0)
-    expect(document.querySelector('.scp-live-tool-state')?.textContent).toBe('成功')
-    expect(document.querySelector('.scp-live-tool-duration')?.textContent).toBe('8ms')
+    expect(document.querySelector('.scp-live-tool-meta .is-ok')).toBeTruthy()
+    expect(document.querySelector('.scp-live-tool-duration')?.textContent).toBe('(8ms)')
     expect(screen.queryByText('思考中…')).toBeNull()
 
     await act(async () => {
@@ -1498,7 +1527,7 @@ describe('SideChatPanel 渲染行为', () => {
     act(() => {
       pushLiveEvent(SESSION_KEY, { type: 'tool_call_end', tool_name: 'Glob', success: true })
     })
-    expect(document.querySelector('.scp-live-tool-state')?.textContent).toBe('成功')
+    expect(document.querySelector('.scp-live-tool-meta .is-ok')).toBeTruthy()
   })
 
   it('流式内容可收起：点「收起」后正文/思考只在过程行体现，可再展开', async () => {
@@ -2239,33 +2268,28 @@ describe('SideChatPanel 接线契约（源码断言）', () => {
     expect(src).toMatch(/if \(msg\.queued\) return null/)
   })
 
-  it('失败态工具名与状态点同色（--error）：扫一眼能定位是哪个工具挂了', () => {
-    expect(css).toMatch(
-      /\.scp-tl-tool\.is-failed \.scp-tl-tool-name\s*\{[^}]*color:\s*var\(--error\)/,
-    )
-  })
-
-  it('工具调用块：命令完整换行不截断 + 深色字体 + 尾部 meta 承载状态与动态计时', () => {
-    // 完整显示：summary 不再单行 ellipsis——路径/命令被截断会埋掉定位信息
-    expect(css).toMatch(/\.scp-tl-tool-summary\s*\{[^}]*white-space:\s*pre-wrap/)
-    expect(css).toMatch(/\.scp-tl-tool-summary\s*\{[^}]*word-break:\s*break-all/)
-    // 深色字体：与思考的弱化色拉开层级（--fg-1 主文本色），名与摘要同色
-    expect(css).toMatch(/\.scp-tl-tool-summary\s*\{[^}]*color:\s*var\(--fg-1\)/)
+  it('工具条目与移动端执行过程弹窗同构：参数代码块 + 状态图标 + 括号耗时', () => {
+    // 参数代码块：完整换行不截断，次级色 + 填充底
+    expect(css).toMatch(/\.scp-tl-tool-params\s*\{[^}]*white-space:\s*pre-wrap/)
+    expect(css).toMatch(/\.scp-tl-tool-params\s*\{[^}]*word-break:\s*break-all/)
+    expect(css).toMatch(/\.scp-tl-tool-params\s*\{[^}]*color:\s*var\(--fg-3\)/)
+    expect(css).toMatch(/\.scp-tl-tool-params\s*\{[^}]*background:\s*var\(--surface-hover\)/)
     expect(css).toMatch(/\.scp-tl-tool-name\s*\{[^}]*color:\s*var\(--fg-1\)/)
-    expect(css).toMatch(/\.scp-live-tool-summary\s*\{[^}]*white-space:\s*pre-wrap/)
-    expect(css).toMatch(/\.scp-live-tool-name\s*\{[^}]*color:\s*var\(--fg-1\)/)
-    // 尾部 meta：状态与计时成组跟随块尾；等宽数字防计时跳动
-    expect(css).toMatch(/\.scp-tl-meta\s*\{[^}]*flex:\s*1 1 auto/)
-    expect(css).toMatch(/\.scp-tl-meta\s*\{[^}]*justify-content:\s*flex-end/)
+    // 移动端同款排版：13px / 1.55（正文与思考同一字号，思考只降色）
+    expect(css).toMatch(/\.scp-tl-tool\s*\{[^}]*font-size:\s*13px/)
+    expect(css).toMatch(/\.scp-tl-tool\s*\{[^}]*line-height:\s*1\.55/)
+    expect(css).toMatch(/\.scp-live-text\s*\{[^}]*font-size:\s*13px/)
+    // 状态图标：成功绿 / 失败红；在途旋转（替代旧的状态文字 + 动态计时）
+    expect(css).toMatch(/\.scp-tl-tool \.is-ok[\s\S]*?color:\s*var\(--success\)/)
+    expect(css).toMatch(/\.scp-tl-tool \.is-fail[\s\S]*?color:\s*var\(--error\)/)
+    expect(css).toMatch(/\.scp-tl-spin[\s\S]*?animation:\s*scp-tl-spin/)
+    // 耗时括号化，等宽数字防跳动
     expect(css).toMatch(/\.scp-tl-duration\s*\{[^}]*font-variant-numeric:\s*tabular-nums/)
-    // 旧的行尾 auto 从 state 上移交 meta：单行布局已退场
-    expect(css).not.toMatch(/\.scp-tl-state\s*\{[^}]*margin-left:\s*auto/)
     const src = read('./SideChatPanel.tsx')
-    // DOM：meta 包裹 state + duration；在途走 elapsedMs 动态计时
-    expect(src).toMatch(/scp-tl-meta/)
-    expect(src).toMatch(/elapsedMs\(b\.startedAt, nowMs\)/)
-    // 200ms tick 时钟（sending 期间走动，空闲停表）
-    expect(src).toMatch(/setInterval\(\(\) => setNowTick/)
+    // DOM：工具名 + 参数代码块 + 状态图标 + 括号耗时
+    expect(src).toMatch(/scp-tl-tool-main/)
+    expect(src).toMatch(/formatToolParams\(b\.params\)/)
+    expect(src).toMatch(/\(\{formatDuration\(b\.durationMs\)\}\)/)
   })
 
   it('流式收起钮进固定高度 sticky 条 + 头部三图标走 MorphIcon 形变包', () => {

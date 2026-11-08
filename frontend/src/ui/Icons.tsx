@@ -100,6 +100,7 @@ export {
   Server as IconServer,
   Paperclip as IconPaperclip,
   List as IconList,
+  Loader2 as IconLoader2,
 } from 'lucide-react'
 
 export function ErrorXIcon({ size = 40 }: { size?: number }) {

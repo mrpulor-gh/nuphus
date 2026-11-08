@@ -12,6 +12,7 @@ import { Check, Gauge, Loader2, X, Zap } from 'lucide-react'
 import type { TraceItem } from '../store'
 import { t } from '../i18n'
 import { formatTokens as compactTokens } from '../../ui/tokenFormat'
+import { formatToolParams } from '../../ui/toolParams'
 
 interface Props {
   traceItems: TraceItem[]
@@ -24,36 +25,6 @@ interface Props {
 function formatTokens(n: number | undefined): string | null {
   if (n === undefined || n === null) return null
   return compactTokens(n)
-}
-
-/** 提取工具调用的关键参数（路径/命令），供手机端执行过程展示。
- *  system_shell → command + cwd；其他工具优先显示常用字段，兜底完整 JSON。 */
-function formatToolParams(params: unknown): string | null {
-  if (params === undefined || params === null) return null
-  if (typeof params === 'string') return params
-  if (typeof params !== 'object') return String(params)
-  const p = params as Record<string, unknown>
-
-  // 常见路径/命令字段（按重要性排序）
-  const pick = ['command', 'cwd', 'path', 'file', 'file_path', 'url', 'query', 'repo']
-  const lines: string[] = []
-  for (const key of pick) {
-    const v = p[key]
-    if (v === undefined || v === null) continue
-    if (typeof v === 'string' && v.length > 0) {
-      lines.push(`${key}: ${v}`)
-    } else if (typeof v === 'number') {
-      lines.push(`${key}: ${v}`)
-    }
-  }
-  if (lines.length > 0) return lines.join('  ')
-  // 无常用字段 → 精简 JSON（截断防撑爆弹窗）
-  try {
-    const s = JSON.stringify(p)
-    return s.length > 160 ? s.slice(0, 157) + '…' : s
-  } catch {
-    return null
-  }
 }
 
 export default function TraceModal({ traceItems, tokenUsage, onClose }: Props) {

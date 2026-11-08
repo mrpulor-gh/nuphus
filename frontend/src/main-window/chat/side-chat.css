@@ -758,8 +758,17 @@
   }
 }
 .scp-thinking-label {
-  font-size: var(--fz-sm);
-  color: var(--fg-3);
+  /* 三个点已经表达「正在思考」，文案不再占视觉空间；
+     保留给读屏（aria-live 区域需要可播报文本），视觉上 sr-only。 */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* 失败提示 */
@@ -1260,44 +1269,27 @@
   word-break: break-all;
   color: var(--fg-1);
 }
-/* 工具结束标记：状态与计时合并为尾部 meta 一组，跟随内容尾（不再单行靠右）。
-   在途时只显示动态计时（.is-live 弱化），结束后切换成败 + 静态耗时。 */
+/* 状态行尾部：在途旋转图标 / 成败图标 + 括号耗时，与时间线工具条目同口径。 */
 .scp-live-tool-meta {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  justify-content: flex-end;
-  font-size: var(--fz-xs, 12px);
-  color: var(--fg-4);
+  align-items: center;
+  gap: 4px;
   font-variant-numeric: tabular-nums;
 }
-.scp-live-tool-duration.is-live {
-  color: var(--fg-3);
-}
-.scp-live-tool-state {
-  flex: 0 0 auto;
-  font-size: var(--fz-xs, 12px);
-  color: var(--fg-3);
-}
-.scp-live-tool-state.is-failed {
-  color: var(--error);
-}
-/* 工具耗时：夹在 summary 与状态之间，靠右但不抢 auto 边距（state 才是锚点） */
 .scp-live-tool-duration {
   flex: 0 0 auto;
-  margin-left: 8px;
   font-family: var(--font-mono);
-  font-size: var(--fz-xs, 12px);
-  color: var(--fg-4);
-  opacity: 0.75;
+  font-size: 11px;
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
 }
 .scp-live-content {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin: 6px 0 0 19px;
+  gap: 10px;
+  margin: 6px 0 0;
   min-width: 0;
   /* 收起钮已移出内容区（进 .scp-live-bar sticky 条）。这里只留一条小缝：
       条子贴在视口底部时会盖住内容末尾，完全不留缝最后一行会贴着条边；
@@ -1368,19 +1360,18 @@
 .scp-jump-bottom.is-raised {
   bottom: 32px;
 }
-/* 思考段弱化 + 正文段常规色；两者都不带背景块 */
+/* 思考 / 正文：字号、行高与配色对齐移动端执行过程弹窗（同为 13px / 1.55）。
+   思考不斜体，只降为次级色 + 轻微透明度——与弹窗里的条目层级一致。 */
 .scp-live-text {
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--spark-primary, var(--fg-1));
-  font-size: var(--fz-md);
-  line-height: 1.6;
+  color: var(--fg-1);
+  font-size: 13px;
+  line-height: 1.55;
 }
 .scp-live-text.is-thinking {
-  font-size: var(--fz-xs, 12px);
-  line-height: 1.65;
-  color: var(--fg-4);
-  font-style: italic;
+  color: var(--fg-3);
+  opacity: 0.82;
 }
 
 /* ── 交错时间线：正文 / 思考 / 工具调用按发生顺序排列 ──
@@ -1389,7 +1380,7 @@
 .scp-timeline {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
   width: 100%;
   min-width: 0;
   /* 展开入场：挂载时一次短促淡入 + 轻微下沉，让「展开」成为可见的过程
@@ -1433,90 +1424,76 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* 工具块：多行块（不再单行）——summary 独占一行完整换行，meta 跟尾。
-   live 行与归档时间线共用这套类名，一处生效。 */
+/* ── 工具调用条目：与移动端执行过程弹窗同构 ──
+   行 = 左侧「工具名 + 参数代码块」列 + 右侧状态图标 + 括号耗时。
+   参数按 command / cwd / path 等定位字段展开成代码块，完整换行不截断。 */
 .scp-tl-tool {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 6px;
+  align-items: flex-start;
+  gap: 8px;
   min-width: 0;
-  padding: 2px 0;
-  font-size: var(--fz-xs, 12px);
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.55;
   color: var(--fg-1);
 }
-.scp-tl-dot {
-  flex: 0 0 auto;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0.85;
-}
-.scp-tl-tool.is-running .scp-tl-dot {
-  animation: scp-tl-pulse 1.2s ease-in-out infinite;
-}
-.scp-tl-tool.is-failed .scp-tl-dot {
-  background: var(--error);
-}
-/* 失败态：工具名与状态点 / 状态文字同色——只染点不染名，扫一眼看不出哪个
-   工具失败了（名字才是定位信息）。live 行与归档时间线共用这套类名，一处生效。 */
-.scp-tl-tool.is-failed .scp-tl-tool-name {
-  color: var(--error);
+.scp-tl-tool-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .scp-tl-tool-name {
-  flex: 0 0 auto;
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-mono);
+  font-size: 13px;
   font-weight: 600;
   color: var(--fg-1);
-}
-/* 完整命令与路径：不做前端截断（截断埋定位信息），等宽 + 主文本色 */
-.scp-tl-tool-summary {
-  flex: 1 1 100%;
-  min-width: 0;
-  white-space: pre-wrap;
   word-break: break-all;
-  color: var(--fg-1);
-  font-family: var(--font-mono);
 }
-/* 尾部 meta：状态 + 计时一组跟随块尾；等宽数字防计时跳动 */
-.scp-tl-meta {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  justify-content: flex-end;
-  font-variant-numeric: tabular-nums;
-}
-.scp-tl-duration {
+.scp-tl-tool-params {
+  display: block;
+  margin: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--surface-hover);
   color: var(--fg-3);
   font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-all;
+  white-space: pre-wrap;
 }
-.scp-tl-state {
-  flex: 0 0 auto;
-  color: var(--fg-3);
-  font-family: var(--font-mono);
+/* 状态图标：成功绿 / 失败红；在途旋转图标（与移动端 Loader2 同款节奏）。 */
+.scp-tl-tool .is-ok,
+.scp-live-tool .is-ok {
+  flex-shrink: 0;
+  color: var(--success);
 }
-.scp-tl-state.is-failed {
+.scp-tl-tool .is-fail,
+.scp-live-tool .is-fail {
+  flex-shrink: 0;
   color: var(--error);
 }
-/* 工具耗时：位于 summary 与状态之间，与 live 行同口径（state 持 auto 边距） */
-.scp-tl-duration {
-  flex: 0 0 auto;
-  margin-left: 8px;
-  color: var(--fg-4);
-  font-family: var(--font-mono);
-  opacity: 0.75;
+.scp-tl-spin,
+.scp-live-tool-spin {
+  flex-shrink: 0;
+  color: var(--fg-3);
+  animation: scp-tl-spin 1s linear infinite;
 }
-@keyframes scp-tl-pulse {
-  0%,
-  100% {
-    opacity: 0.85;
+@keyframes scp-tl-spin {
+  to {
+    transform: rotate(360deg);
   }
-  50% {
-    opacity: 0.25;
-  }
+}
+.scp-tl-duration {
+  flex-shrink: 0;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── 消息操作：最后一条助手回复底部的单行动作 + ctx 消耗 ── */
@@ -2122,4 +2099,32 @@
     opacity: 0.45;
     transform: scale(0.82);
   }
+}
+/* ── 失败气泡：可读原因 + 建议 + 折叠的原始诊断 ── */
+.scp-error {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.scp-error-title {
+  font-weight: 600;
+}
+.scp-error-hint {
+  font-size: 12.5px;
+  line-height: 1.55;
+  opacity: 0.75;
+}
+.scp-error-detail summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  opacity: 0.65;
+}
+.scp-error-detail code {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.7;
 }
