@@ -690,6 +690,7 @@ commands::set_raise_on_done,
             commands::hud::hud_resume,
             commands::hud::hud_stop,
             commands::export_error_log,
+            commands::file_ops::copy_file_as,
             // -- Speech-to-text --
             speech::commands::stt_start,
             speech::commands::stt_stop,

@@ -17,6 +17,7 @@ pub mod dict_ocr;
 pub mod dropped_files;
 pub mod export_log;
 pub mod external;
+pub mod file_ops;
 pub mod hud;
 pub mod knowledge;
 pub mod mcp;

@@ -94,6 +94,28 @@ describe('ReferenceBar 图像理解前置校验（共享策略源）', () => {
     expect(container.querySelector('.ref-vision-hint--warning')).toBeNull()
   })
 
+  it('截图引用 chip 携带文件路径（右键复制路径 / 另存为的锚点）', async () => {
+    getVisionResolution.mockResolvedValue({
+      strategy: 'none',
+      model: '',
+      provider: '',
+      leader_model: 'leader',
+    })
+    const path = String.raw`C:\shots\a.png`
+    const { container } = render(
+      <ReferenceBar
+        references={[{ type: 'capture', id: path, label: 'a.png (100×50)' }]}
+        pendingImages={[]}
+        pendingFiles={[]}
+        onRemoveReference={() => {}}
+        onRemoveImage={() => {}}
+        onRemoveFile={() => {}}
+      />,
+    )
+    await waitFor(() => expect(getVisionResolution).toHaveBeenCalled())
+    expect(container.querySelector('.ref-chip--capture')?.getAttribute('data-file-path')).toBe(path)
+  })
+
   it('无待发图片时不展示策略提示（策略源仍保持就绪供入栏判定）', async () => {
     getVisionResolution.mockResolvedValue({
       strategy: 'none',

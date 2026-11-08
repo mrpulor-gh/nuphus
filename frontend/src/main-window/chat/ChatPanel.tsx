@@ -2279,6 +2279,7 @@ export function ChatPanel({
                                             <img
                                               key={`cap-${i}`}
                                               src={src}
+                                              data-file-path={r.id}
                                               alt={r.label || `截图 ${i + 1}`}
                                               className="msg-image"
                                               onClick={() => setLightboxUrl(src)}

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLanguage } from '../locales'
 import { invoke } from '../core/bridge'
-import { IconCopy, IconFolder, IconQuote } from './Icons'
+import { IconCopy, IconFolder, IconQuote, IconSave } from './Icons'
+import { showAppFeedback } from './islandChannel'
 import '../styles/context-menu.css'
 
 /**
@@ -47,7 +48,7 @@ export default function AppContextMenu() {
       const filePath = fileItem?.dataset.filePath
       if (filePath) {
         const x = Math.min(e.clientX, window.innerWidth - 190)
-        const y = Math.min(e.clientY, window.innerHeight - 132)
+        const y = Math.min(e.clientY, window.innerHeight - 172)
         setMenu({ x: Math.max(4, x), y: Math.max(4, y), text: filePath, filePath })
         return
       }
@@ -71,7 +72,7 @@ export default function AppContextMenu() {
       const text = selectionText || blockText
       if (!text) return // 无可复制内容：右键无动作（原生已拦截）
 
-      // 边界防溢出（菜单约 180×112：多一项「引用这段」）
+      // 边界防溢出（文件路径菜单约 180×172：四项 + 分隔线 + 预览；纯文本菜单约 180×112）
       const menuW = 180
       const menuH = selectionText ? 112 : 84
       const x = Math.min(e.clientX, window.innerWidth - menuW - 8)
@@ -144,6 +145,32 @@ export default function AppContextMenu() {
     close()
   }
 
+  /**
+   * 另存为：系统保存对话框选目标 → 后端 `copy_file_as` 复制。
+   *
+   * 截图原件落在临时目录（%TEMP%/nuphus/captures），没有这个出口时用户只能
+   * 在 Nuphus 内消费；对话框的覆盖确认由 plugin-dialog 负责，后端只做复制。
+   */
+  const doSaveAs = async () => {
+    if (!menu?.filePath) return
+    const src = menu.filePath
+    close()
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog')
+      const base = src.split(/[\\/]/).pop() || 'nuphus-export'
+      const ext = (base.split('.').pop() || '').toLowerCase()
+      const dest = await save({
+        defaultPath: base,
+        filters: ext ? [{ name: ext.toUpperCase(), extensions: [ext] }] : undefined,
+      })
+      if (!dest) return // 用户取消
+      await invoke('copy_file_as', { src, dest })
+      showAppFeedback(t('common.saveAsDone', dest), 'success')
+    } catch (e) {
+      showAppFeedback(t('common.saveAsFailed', e instanceof Error ? e.message : String(e)), 'error')
+    }
+  }
+
   if (!menu) return null
   return createPortal(
     <div
@@ -168,6 +195,11 @@ export default function AppContextMenu() {
       <div className="ctx-menu-divider" />
       {menu.filePath ? (
         <>
+          <button type="button" className="ctx-menu-item" onClick={() => void doSaveAs()}>
+            <IconSave size={13} />
+            {t('common.saveAs')}
+          </button>
+          <div className="ctx-menu-divider" />
           <button type="button" className="ctx-menu-item" onClick={doReveal}>
             <IconFolder size={13} />
             {t('common.revealInFolder')}

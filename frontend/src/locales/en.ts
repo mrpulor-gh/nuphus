@@ -485,6 +485,9 @@ const en: Record<string, string> = {
   'sessionRail.current': 'Current',
   'common.copyPath': 'Copy path',
   'common.revealInFolder': 'Show in folder',
+  'common.saveAs': 'Save as…',
+  'common.saveAsDone': 'Saved as: {0}',
+  'common.saveAsFailed': 'Save as failed: {0}',
   'sessionRail.switchFailBusy':
     'This session is executing ...please wait for it to finish before switching',
   'sessionRail.switchFailAppend': 'Instruction queue still processing ...switchable shortly',

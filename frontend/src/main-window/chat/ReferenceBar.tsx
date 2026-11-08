@@ -146,6 +146,7 @@ export default function ReferenceBar({
             <span
               key={`${ref.type}-${ref.id}-${i}`}
               className={`ref-chip ref-chip--${ref.type}`}
+              data-file-path={ref.type === 'capture' ? ref.id : undefined}
               title={ref.type === 'quote' ? ref.label : ref.id}
             >
               <span className="ref-chip-icon" aria-hidden="true">
@@ -205,6 +206,7 @@ export default function ReferenceBar({
               <div
                 key={`file-${i}`}
                 className={`ref-img-pill${clickable ? ' ref-img-pill--clickable' : ''}`}
+                data-file-path={f.path}
                 title={clickable ? `点击预览: ${f.path}` : f.path}
                 onClick={
                   clickable
