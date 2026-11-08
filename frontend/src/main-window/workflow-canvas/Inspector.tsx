@@ -1520,7 +1520,10 @@ export function Inspector({
                           readOnly={readOnly}
                           references
                           onCommit={v => patchModelWith('first_frame', v.trim() ? v : undefined)}
-                          hint={editorText('留空 = 文生视频；可插入变量引用上游产物。', t)}
+                          hint={editorText(
+                            '留空 = 文生视频；可填本地图片路径（自动转 data URI）、公网 URL 或 data URI，也可插入变量引用上游产物。',
+                            t,
+                          )}
                         />
                       </>
                     )}
@@ -2004,6 +2007,14 @@ export function Inspector({
                 readOnly={readOnly}
                 onCommit={v => onPatch({ capture: v || undefined })}
               />
+              {kind === 'model' && modelKind === 'image' && (
+                <div className="wfp-frow__hint">
+                  {editorText(
+                    '图片模态另写入 <变量名>_files（全部图片路径数组，顺序即生成顺序）。',
+                    t,
+                  )}
+                </div>
+              )}
               {!!captureConsumers?.length && (
                 <div className="wfp-frow__hint">
                   {t('workflowCanvas.variable.consumers')}

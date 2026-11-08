@@ -93,10 +93,11 @@ tags: [工具, PDF, 图像, 视频, 音频, 语音克隆, 文档, invoke]
 - 错误归一为 `GenError`（unsupported_provider / transport / protocol / timeout / empty_result），UI 与工作流只看到归一化文案。
 - 工作流 `do.model`（kind=image）复用同一实现：具名字段（比例/张数）进语义请求 `GenerationRequest`，厂商键名映射只活在协议层。
 
-**`video_generate(prompt, model?, provider?, params?, poll_interval_secs?, timeout_secs?)`**
+**`video_generate(prompt, model?, provider?, params?, first_frame?, poll_interval_secs?, timeout_secs?)`**
 - `prompt` 必填；`model` / `provider` 可选，仅当次覆盖绑定。
+- `first_frame` 可选首帧图：本地图片路径（语义层自动读文件转 `data:<mime>;base64,...`）、公网 URL 或 data URI；留空 = 文生视频。归一化在语义层完成，协议层只认 URL / data URI。
 - `poll_interval_secs` 默认 5（1–60）；`timeout_secs` 默认 300（30–600）。超时 / 失败错误含 `task_id` 便于排查。
-- `params` 同为提供商特定附加参数（如时长 / 清晰度 / 首帧图等，键名由协议决定）；图像输入以 URL 或 data URI 形式写进 `params`。
+- `params` 同为提供商特定附加参数（如时长 / 清晰度等，键名由协议决定），原样透传。
 - 工作流 `do.model`（kind=video）复用同一实现：具名字段（比例/时长/首帧）进语义请求，`timeout_secs` 为轮询超时。
 
 **落盘与消费**

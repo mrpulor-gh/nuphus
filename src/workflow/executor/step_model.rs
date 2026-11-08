@@ -22,6 +22,8 @@ impl Executor {
     /// 执行 model 步骤 — 单次模型调用（text / image / video）
     ///
     /// capture 语义：text=正文，image=第一张图片绝对路径，video=视频绝对路径。
+    /// image 模态额外写入 `<capture>_files`（全部图片绝对路径数组），
+    /// 让 count>1 时被主产物契约丢弃的其余图片仍可被下游取到。
     pub(super) async fn execute_model_step(
         &self,
         step: &Step,
@@ -79,9 +81,12 @@ impl Executor {
                 .await
             {
                 Ok(output) => {
-                    // ── 变量捕获：主产物写入变量池 ──
-                    super::variables::capture_output(&step.capture, &output, variables)?;
-                    return Ok(output);
+                    // ── 变量捕获：主产物 + image 全部产物清单 ──
+                    super::variables::capture_output(&step.capture, &output.primary, variables)?;
+                    if resolved_opts.kind == ModelKind::Image {
+                        write_artifact_list(&step.capture, &output.artifacts, variables);
+                    }
+                    return Ok(output.primary);
                 }
                 Err(error) => last_error = error.to_string(),
             }
@@ -103,9 +108,15 @@ impl Executor {
         prompt: &str,
         opts: &ModelOpts,
         llm: Option<&dyn ApiClient>,
-    ) -> crate::Result<String> {
+    ) -> crate::Result<ModelCallOutput> {
         match opts.kind {
-            ModelKind::Text => self.model_text_once(step, prompt, opts, llm).await,
+            ModelKind::Text => {
+                let text = self.model_text_once(step, prompt, opts, llm).await?;
+                Ok(ModelCallOutput {
+                    primary: text,
+                    artifacts: Vec::new(),
+                })
+            }
             ModelKind::Image => Self::model_image_once(prompt, opts),
             ModelKind::Video => Self::model_video_once(prompt, opts),
         }
@@ -209,8 +220,8 @@ impl Executor {
         Ok(response)
     }
 
-    /// image：复用生成实现；capture 主产物 = 第一张图片的绝对路径。
-    fn model_image_once(prompt: &str, opts: &ModelOpts) -> crate::Result<String> {
+    /// image：复用生成实现；主产物 = 第一张图片的绝对路径，artifacts = 全部图片路径。
+    fn model_image_once(prompt: &str, opts: &ModelOpts) -> crate::Result<ModelCallOutput> {
         let request =
             model_generation_request(prompt, opts, GenerationKind::Image).map_err(|error| {
                 crate::NuphusError::agent(format!("Model image generation failed: {error}"))
@@ -233,11 +244,20 @@ impl Executor {
         let primary = primary_artifact_path(&paths).ok_or_else(|| {
             crate::NuphusError::agent("Model image generation returned no artifact".to_string())
         })?;
-        Ok(primary.display().to_string())
+        let artifacts = paths
+            .iter()
+            .cloned()
+            .map(ensure_absolute)
+            .map(|path| path.display().to_string())
+            .collect();
+        Ok(ModelCallOutput {
+            primary: primary.display().to_string(),
+            artifacts,
+        })
     }
 
-    /// video：复用生成实现；capture 主产物 = 视频绝对路径；timeout_secs 缺省 300。
-    fn model_video_once(prompt: &str, opts: &ModelOpts) -> crate::Result<String> {
+    /// video：复用生成实现；主产物 = 视频绝对路径；timeout_secs 缺省 300。
+    fn model_video_once(prompt: &str, opts: &ModelOpts) -> crate::Result<ModelCallOutput> {
         use generation::{
             DEFAULT_POLL_INTERVAL_SECS, DEFAULT_VIDEO_TIMEOUT_SECS, MAX_VIDEO_TIMEOUT_SECS,
         };
@@ -261,8 +281,43 @@ impl Executor {
         .map_err(|error| {
             crate::NuphusError::agent(format!("Model video generation failed: {error}"))
         })?;
-        Ok(ensure_absolute(path).display().to_string())
+        let primary = ensure_absolute(path).display().to_string();
+        Ok(ModelCallOutput {
+            primary,
+            artifacts: Vec::new(),
+        })
     }
+}
+
+/// 单次 model 调用的产物集合。
+///
+/// `primary` 是 capture 主产物（既有契约：text=正文 / image=首图路径 /
+/// video=视频路径）；`artifacts` 是本次调用的全部落盘产物（text 为空、video 单个、
+/// image 为 API 返回顺序的全部图片）。主产物契约不变，多产物通过派生变量暴露。
+struct ModelCallOutput {
+    primary: String,
+    artifacts: Vec<String>,
+}
+
+/// image 模态的产物清单：`<capture>_files` = 全部图片绝对路径数组。
+///
+/// 主 capture 保持「第一张路径」的既有契约（下游 first_frame 等字段直接消费）；
+/// 清单是 additive 派生变量，让 count>1 时其余图片也有名字可取。capture 名支持
+/// `{{var}}` 模板，与 [`super::variables::capture_output`] 同一套解析；无 capture
+/// 或无产物时不写。
+pub(super) fn write_artifact_list(
+    capture: &Option<String>,
+    artifacts: &[String],
+    variables: &mut HashMap<String, serde_json::Value>,
+) {
+    let Some(capture) = capture.as_deref() else {
+        return;
+    };
+    if artifacts.is_empty() {
+        return;
+    }
+    let name = super::variables::resolve_vars_str(capture, variables);
+    variables.insert(format!("{name}_files"), serde_json::json!(artifacts));
 }
 
 /// 构造语义生成请求：具名字段原样进 `GenerationRequest`（语义字段 → 厂商请求体

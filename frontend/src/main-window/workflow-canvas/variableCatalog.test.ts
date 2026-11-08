@@ -101,4 +101,32 @@ describe('control-flow variable catalog', () => {
     expect(catalog.captures).toHaveLength(1)
     expect(catalog.captures[0].sourceLabel).toBe('a / b')
   })
+  it('offers the image artifact list beside the main capture', () => {
+    const image: WorkflowStep = {
+      id: 'paint',
+      name: '画图',
+      capture: 'hero',
+      do: { model: '画一只猫', with: { kind: 'image', count: 2 } },
+    }
+    const catalog = buildVariableCatalog([image], [], 'reader')
+    expect(catalog.captures.map(v => v.name)).toEqual(['hero', 'hero_files'])
+    expect(catalog.captures[1].producerStepIds).toEqual(['paint'])
+    expect(catalog.captures[1].sourceLabel).toBe('画图')
+  })
+  it('does not invent an artifact list for text or video model steps', () => {
+    const text: WorkflowStep = {
+      id: 'copy',
+      name: '写文案',
+      capture: 'copy',
+      do: { model: '写一句', with: { kind: 'text' } },
+    }
+    const video: WorkflowStep = {
+      id: 'clip',
+      name: '生成视频',
+      capture: 'clip',
+      do: { model: '镜头推进', with: { kind: 'video', duration: 5 } },
+    }
+    expect(buildVariableCatalog([text], [], 'reader').captures.map(v => v.name)).toEqual(['copy'])
+    expect(buildVariableCatalog([video], [], 'reader').captures.map(v => v.name)).toEqual(['clip'])
+  })
 })

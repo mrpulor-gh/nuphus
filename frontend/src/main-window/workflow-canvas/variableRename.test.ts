@@ -108,4 +108,27 @@ describe('field references and safe rename', () => {
       steps[1],
     )
   })
+  it('renames image artifact list references alongside the main capture', () => {
+    const steps: WorkflowStep[] = [
+      {
+        id: 'paint',
+        name: 'Paint',
+        capture: 'hero',
+        do: { model: 'draw a cat', with: { kind: 'image', count: 2 } },
+      },
+      {
+        id: 'use',
+        name: 'Use',
+        do: { tool: 'echo', with: { first: '{{hero}}', all: '{{hero_files}}' } },
+      },
+    ]
+    const preview = previewVariableRename(steps, [], 'paint', 'art')
+    expect(preview.error).toBeUndefined()
+    expect(preview.changes.map(change => change.after)).toEqual(['{{art}}', '{{art_files}}'])
+    const next = applyVariableRename(steps, preview, {})
+    expect((next[1].do as { with: Record<string, string> }).with).toEqual({
+      first: '{{art}}',
+      all: '{{art_files}}',
+    })
+  })
 })

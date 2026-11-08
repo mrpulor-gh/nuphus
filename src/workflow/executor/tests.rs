@@ -3095,3 +3095,27 @@ fn primary_artifact_path_takes_first_and_absolutizes() {
     assert!(picked.is_absolute(), "capture 出去的路径必须是绝对路径");
     assert_eq!(picked, std::env::current_dir().unwrap().join(rel));
 }
+
+/// image 多产物清单：`<capture>_files` 写入全部路径；capture 支持 {{var}} 模板；
+/// 无 capture / 无产物时不写（不制造空变量）。
+#[test]
+fn write_artifact_list_uses_capture_template_and_skips_empty() {
+    use super::step_model::write_artifact_list;
+
+    let mut vars = HashMap::from([("prefix".to_string(), serde_json::json!("shot"))]);
+    let artifacts = vec![
+        "C:/gen/image_1_0.png".to_string(),
+        "C:/gen/image_1_1.png".to_string(),
+    ];
+    write_artifact_list(&Some("{{prefix}}".to_string()), &artifacts, &mut vars);
+    assert_eq!(
+        vars.get("shot_files"),
+        Some(&serde_json::json!(artifacts)),
+        "全部产物按 API 顺序写入 <capture>_files"
+    );
+    assert!(!vars.contains_key("shot"), "派生清单不得占用主 capture 名");
+
+    write_artifact_list(&None, &artifacts, &mut vars);
+    write_artifact_list(&Some("empty".to_string()), &[], &mut vars);
+    assert!(!vars.contains_key("empty_files"), "无产物不写空数组");
+}

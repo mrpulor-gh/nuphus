@@ -122,12 +122,18 @@ export function previewVariableRename(
       path.startsWith('/do/loop/until/')
         ? index.loopConditionScope.get(step.id)
         : index.beforeStep.get(step.id)
+    // 派生变量与主 capture 同源：`<name>_files`（image 产物清单）改名时要一起跟随，
+    // 否则清单引用会指向旧名。后缀为空 = 主 capture 自身。
+    const derivedSuffix = (name: string): string | undefined =>
+      name === oldName ? '' : name === `${oldName}_files` ? '_files' : undefined
     for (const site of referenceSites(step)) {
-      if (site.name !== oldName || site.input) continue
-      const source = scopeFor(site.fieldPath)?.get(oldName)
+      const suffix = derivedSuffix(site.name)
+      if (suffix === undefined || site.input) continue
+      const source = scopeFor(site.fieldPath)?.get(site.name)
       const producers = source?.producerStepIds ?? (source?.stepId ? [source.stepId] : [])
       if (!producers.includes(producerId)) continue
-      const collisions = scopeFor(site.fieldPath)?.get(newName)
+      const targetName = `${newName}${suffix}`
+      const collisions = scopeFor(site.fieldPath)?.get(targetName)
       if (collisions && collisions.stepId !== producerId) preview.error = 'collision'
       const group = groups.get(site.fieldPath) ?? []
       group.push(site)
@@ -135,8 +141,10 @@ export function previewVariableRename(
     }
     for (const [fieldPath, sites] of groups) {
       let after = sites[0].value
-      for (const site of [...sites].sort((a, b) => b.start - a.start))
-        after = after.slice(0, site.start) + newName + after.slice(site.end)
+      for (const site of [...sites].sort((a, b) => b.start - a.start)) {
+        const suffix = derivedSuffix(site.name) ?? ''
+        after = after.slice(0, site.start) + `${newName}${suffix}` + after.slice(site.end)
+      }
       const binding = scopeFor(fieldPath)?.get(oldName)
       preview.changes.push({
         id: `${step.id}:${fieldPath}`,

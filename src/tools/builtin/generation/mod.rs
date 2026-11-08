@@ -32,6 +32,7 @@ use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 
 mod artifacts;
+mod media;
 mod minimax;
 
 /// 视频轮询默认间隔 / 默认总超时
@@ -470,11 +471,30 @@ pub(crate) fn generate_video(
         load_registry().map_err(|e| GenError::protocol(format!("加载模型配置失败: {e}")))?;
     let (target, protocol) =
         resolve_target(&registry, req.kind, provider_override, model_override)?;
+    let request = normalize_media_inputs(req)?;
     protocol
-        .video(&target, req)?
+        .video(&target, &request)?
         .into_iter()
         .next()
         .ok_or_else(|| GenError::empty_result("视频生成未返回任何产物"))
+}
+
+/// 语义层输入归一化：协议层只该看到「服务端可取到的引用」。
+///
+/// 目前唯一的媒体输入是视频首帧。本地文件由 [`media::image_ref_to_data_uri`]
+/// 统一转 data URI；空串归一为「无首帧」（文生视频）。这一步刻意放在语义层，
+/// 任何协议实现都不需要知道「本地路径」这种形态。
+fn normalize_media_inputs(req: &GenerationRequest) -> Result<GenerationRequest, GenError> {
+    let Some(source) = req.first_frame.as_deref() else {
+        return Ok(req.clone());
+    };
+    let mut normalized = req.clone();
+    normalized.first_frame = if source.trim().is_empty() {
+        None
+    } else {
+        Some(media::image_ref_to_data_uri(source)?)
+    };
+    Ok(normalized)
 }
 
 // ── 工具输出文案（对外契约，逐字不变）──
@@ -517,12 +537,14 @@ fn run_video_generate(
     provider_override: Option<&str>,
     model_override: Option<&str>,
     params: Option<&Value>,
+    first_frame: Option<&str>,
     poll_interval_secs: u64,
     timeout_secs: u64,
 ) -> Result<String, String> {
     let mut request = GenerationRequest::new(GenerationKind::Video, prompt);
     request.extra =
         GenerationRequest::extra_from_params(params).map_err(|error| error.to_string())?;
+    request.first_frame = first_frame.map(|value| value.to_string());
     request.poll_interval_secs = Some(poll_interval_secs);
     request.timeout_secs = Some(timeout_secs);
     let artifact =
@@ -601,7 +623,7 @@ impl ToolRegistry {
     pub(crate) fn register_video_generate(&mut self) {
         self.register(ToolDef {
             name: "video_generate".to_string(),
-            description: "生成视频（异步任务轮询，分钟级耗时）。产出为本地 mp4 文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型默认取自模型界面绑定的「视频生成」能力（模型 → 图像音频模型 → 视频生成），未绑定会直接报错并列出可绑候选——不做任何静默发现。model 参数为当次覆盖（可填任意已注册的视频生成模型）；provider 参数为当次覆盖服务商归属（同模型名跨服务商时用来消歧）。params 为可选 JSON 对象，是提供商特定附加参数（如时长/清晰度/首帧图等）：键名与取值由所选提供商的生成协议决定，原样透传合并进请求体，与顶层参数同名时顶层优先；图像输入以 URL 或 data URI 形式写进 params。轮询有超时兜底（timeout_secs），超时/失败错误含任务号便于排查。凭证（api_key）来自绑定模型所属的服务商，无需也不应传入密钥。".to_string(),
+            description: "生成视频（异步任务轮询，分钟级耗时）。产出为本地 mp4 文件路径（~/.nuphus/generated/），可被后续步骤 capture 引用。模型默认取自模型界面绑定的「视频生成」能力（模型 → 图像音频模型 → 视频生成），未绑定会直接报错并列出可绑候选——不做任何静默发现。model 参数为当次覆盖（可填任意已注册的视频生成模型）；provider 参数为当次覆盖服务商归属（同模型名跨服务商时用来消歧）。first_frame 为可选首帧图：本地图片路径（自动读取并转 data URI）、公网 URL 或 data URI，留空 = 文生视频。params 为可选 JSON 对象，是提供商特定附加参数（如时长/清晰度）：键名与取值由所选提供商的生成协议决定，原样透传合并进请求体，与顶层参数同名时顶层优先。轮询有超时兜底（timeout_secs），超时/失败错误含任务号便于排查。凭证（api_key）来自绑定模型所属的服务商，无需也不应传入密钥。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -616,6 +638,10 @@ impl ToolRegistry {
                     "model": {
                         "type": "string",
                         "description": "可选。当次覆盖绑定的视频生成模型（可填任意已注册的生成模型）；不填则用模型界面绑定的模型"
+                    },
+                    "first_frame": {
+                        "type": "string",
+                        "description": "可选。首帧图：本地图片路径（自动转 data URI）、公网 URL 或 data URI；留空 = 文生视频"
                     },
                     "params": {
                         "type": "object",
@@ -656,6 +682,12 @@ impl ToolRegistry {
                     .filter(|s| !s.trim().is_empty())
                     .map(|s| s.trim().to_string());
                 let extra = params.get("params").cloned();
+                let first_frame = params
+                    .get("first_frame")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
                 let poll_interval_secs = params
                     .get("poll_interval_secs")
                     .and_then(|v| v.as_u64())
@@ -672,6 +704,7 @@ impl ToolRegistry {
                         provider.as_deref(),
                         model.as_deref(),
                         extra.as_ref(),
+                        first_frame.as_deref(),
                         poll_interval_secs,
                         timeout_secs,
                     ) {

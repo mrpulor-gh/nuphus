@@ -47,6 +47,33 @@ function captureOf(step: WorkflowStep): VariableCandidate | undefined {
   }
 }
 
+/**
+ * model.image 的产物清单变量：执行器在 capture 之外额外写入 `<capture>_files`
+ * （全部图片绝对路径数组，顺序 = 生成端返回顺序）。非 image 模态没有这项。
+ *
+ * 只做编辑器提示，不改变 IR；运行时是否写入由执行器决定（image 模态且有 capture）。
+ */
+function artifactListOf(
+  step: WorkflowStep,
+  primary: VariableCandidate,
+): VariableCandidate | undefined {
+  if (typeof step.do !== 'object' || step.do === null) return undefined
+  const action = step.do as { model?: unknown; with?: unknown }
+  if (typeof action.model !== 'string') return undefined
+  const opts = action.with
+  if (!opts || typeof opts !== 'object') return undefined
+  if ((opts as { kind?: unknown }).kind !== 'image') return undefined
+  return { ...primary, name: `${primary.name}_files` }
+}
+
+/** 一个步骤产生的全部变量候选（主产物 + 派生产物清单）。 */
+function captureCandidatesOf(step: WorkflowStep): VariableCandidate[] {
+  const primary = captureOf(step)
+  if (!primary) return []
+  const artifacts = artifactListOf(step, primary)
+  return artifacts ? [primary, artifacts] : [primary]
+}
+
 type Scope = Map<string, VariableCandidate>
 
 function mergeSources(candidates: (VariableCandidate | undefined)[]): VariableSource[] {
@@ -88,8 +115,7 @@ export function buildVariableCatalogIndex(
 } {
   const captures = new Map<string, VariableCandidate>()
   walkSteps(steps, step => {
-    const candidate = captureOf(step)
-    if (candidate) {
+    for (const candidate of captureCandidatesOf(step)) {
       const prior = captures.get(candidate.name)
       captures.set(candidate.name, {
         ...candidate,
@@ -179,8 +205,7 @@ export function buildVariableCatalogIndex(
       }
       if (Array.isArray(action.auto))
         scope = joinScopes([scope, visit(action.auto as WorkflowStep[], scope)])
-      const capture = captureOf(step)
-      if (capture) scope.set(capture.name, capture)
+      for (const capture of captureCandidatesOf(step)) scope.set(capture.name, capture)
       if (step.on_error === 'skip' || conditionalTail) scope = joinScopes([before, scope])
       if ('break' in action || 'continue' in action) conditionalTail = true
     }

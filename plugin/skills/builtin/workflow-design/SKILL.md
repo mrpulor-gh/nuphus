@@ -64,7 +64,7 @@ tags: [workflow, 设计, 编排, schema, 调试, 闭环]
 | call | `{"call":"wf-id","with":{"inputs":{...},"outputs":{...}}}` | inputs 传子变量；outputs 子变量名→父变量名回写 |
 | wait | `{"wait":"提示语","auto":[...]}` | auto=等待期自动执行步骤（可选） |
 | chat | `{"chat":"LLM任务描述","with":{...}}` | LLM 决策节点（原 chat_agent） |
-| model | `{"model":"提示词","with":{"kind":"text\|image\|video"}} | 一次模型调用：text=单轮文案（无工具），image/video=生成；capture=正文 / 首图路径 / 视频路径；with.model+provider 成对精确路由。具名规格（越界值编译期报错）：`ratio`∈1:1/4:3/3:4/3:2/2:3/16:9/9:16，`count`1–4（image 张数），`duration`∈5/6/8/10（video 秒），`first_frame`首帧图路径支持 {{var}}（空=文生视频）；其余键走 `params` 透传，显式键优先于具名字段 |
+| model | `{"model":"提示词","with":{"kind":"text\|image\|video"}} | 一次模型调用：text=单轮文案（无工具），image/video=生成；capture=正文 / 首图路径 / 视频路径（image 另写 `<capture>_files` 全部图片路径数组）；with.model+provider 成对精确路由。具名规格（越界值编译期报错）：`ratio`∈1:1/4:3/3:4/3:2/2:3/16:9/9:16，`count`1–4（image 张数），`duration`∈5/6/8/10（video 秒），`first_frame`首帧图支持 {{var}}（本地路径自动转 data URI，也可填公网 URL/data URI；空=文生视频）；其余键走 `params` 透传，显式键优先于具名字段 |
 | script | `{"script":{"runtime":"python"\|"node"\|"ahk"\|"pwsh","code":"...","cwd":"?"}}` | code 支持 `{{var}}` 替换 |
 | assert | `{"assert":{"condition":{...},"message":"?"}}` | on_error=skip 时变非阻断校验 |
 | mcp | `{"mcp":{"server":"key","tool":"name","with":{...}}}` | server 对应 servers.yaml |

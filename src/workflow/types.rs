@@ -482,7 +482,8 @@ pub struct ModelOpts {
     /// video 时长（秒，仅 5/6/8/10）；执行时进入语义生成请求，请求体键名由生成协议决定
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<u32>,
-    /// video 首帧图路径（支持 `{{变量}}`；空 = 文生视频）；
+    /// video 首帧图引用（支持 `{{变量}}`；空 = 文生视频）。
+    /// 本地路径在生成语义层自动转 data URI，公网 URL / data URI 原样透传；
     /// 执行时进入语义生成请求，请求体键名由生成协议决定
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_frame: Option<String>,
