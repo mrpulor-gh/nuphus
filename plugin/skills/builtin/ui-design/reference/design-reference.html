@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>视觉系统参考</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #f7f7f6;
+    --surface-2: #f1f1f0;
+    --surface-3: #ecebe7;
+    --wash: rgba(23, 24, 26, .06);
+    --wash-strong: rgba(23, 24, 26, .1);
+    --ink: #17181a;
+    --ink-2: #3c3b37;
+    --ink-3: #5c5b56;
+    --ink-4: #6f6e68;
+    --ink-5: #85847e;
+    --muted: #73726d;
+    --solid: #0e0f11;
+    --banner: #0b0b0c;
+    --rule: rgba(23, 24, 26, .16);
+    --rule-soft: rgba(23, 24, 26, .07);
+    --ok: #15803d;
+    --signal: #2231dd;
+    --ember: #b8431c;
+    --teal: #1db4cc;
+    --blue: #3d7ef5;
+    --purple: #a855f7;
+    --pink: #ec4899;
+    --green: #10b981;
+    --on-solid: #ffffff;
+    --card-shadow: none;
+    --font: Inter, "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --ease: cubic-bezier(.22, 1, .36, 1);
+    --ease-soft: cubic-bezier(.33, .55, .2, 1);
+  }
+
+  html[data-theme="dark"] {
+    --bg: #000000;
+    --surface: #0f0f0f;
+    --surface-2: #181818;
+    --surface-3: #202020;
+    --wash: rgba(255, 255, 255, .09);
+    --wash-strong: rgba(255, 255, 255, .14);
+    --ink: #ffffff;
+    --ink-2: #b4b4b4;
+    --ink-3: #9a9a9a;
+    --ink-4: #828282;
+    --ink-5: #6b6b6b;
+    --muted: #8e8d88;
+    --solid: #000000;
+    --banner: #0b0b0c;
+    --rule: rgba(255, 255, 255, .14);
+    --rule-soft: rgba(255, 255, 255, .07);
+    --ok: #34d17a;
+    --on-solid: #000000;
+    --card-shadow: none;
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  a { color: inherit; }
+  button { font: inherit; }
+  ::selection { background: rgba(23, 24, 26, .14); }
+
+  .shell { padding: 0 20px; }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  /* ---------- top bar ---------- */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    height: 64px;
+    padding: 0 20px;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 500; letter-spacing: -.01em; }
+  .mark {
+    width: 28px; height: 28px; border-radius: 9px; background: var(--ink); color: var(--bg);
+    display: grid; place-items: center; font-size: 14px; font-weight: 700;
+    transform: rotate(-4deg);
+  }
+  .topnav { display: flex; align-items: center; gap: 4px; color: var(--ink-3); }
+  .topnav span { padding: 7px 11px; border-radius: 999px; font-weight: 500; }
+  .topnav span.on { color: var(--ink); background: var(--wash); }
+  .top-actions { display: flex; align-items: center; gap: 8px; }
+  .theme-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 36px; padding: 0 14px; border: 0; border-radius: 999px;
+    background: var(--wash); color: var(--ink-2); cursor: pointer;
+    transition: background-color .16s, color .16s, scale .2s var(--ease);
+  }
+  .theme-btn:hover { background: var(--wash-strong); color: var(--ink); }
+  .theme-btn:active { scale: .97; }
+  .solid-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 36px; padding: 0 15px; border: 0; border-radius: 999px;
+    background: var(--ink); color: var(--bg); font-size: 13px; font-weight: 500;
+    transition: opacity .14s, scale .2s var(--ease);
+  }
+  .solid-pill:active { scale: .96; }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 92px 0 64px; text-align: center; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 11px 17px; border-radius: 999px; background: var(--bg);
+    box-shadow: inset 0 0 0 1px rgba(23, 24, 26, .12);
+    color: var(--ink); font-size: 13px; font-weight: 500; line-height: 1.2;
+  }
+  html[data-theme="dark"] .pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
+  .hero h1 {
+    margin: 26px auto 0;
+    max-width: 18ch;
+    font-size: clamp(38px, 5vw, 52px);
+    line-height: 1.05;
+    font-weight: 500;
+    letter-spacing: -.024em;
+  }
+  .hero .sub {
+    margin: 18px auto 0;
+    max-width: 62ch;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1.55;
+    text-wrap: balance;
+  }
+  .hero .meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 28px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 15px; border-radius: 999px;
+    background: var(--wash); color: var(--ink-2); font-size: 13px; font-weight: 500;
+  }
+  .chip .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .55; }
+
+  /* ---------- sections ---------- */
+  section.block { padding: 54px 0 0; }
+  .kicker { display: flex; align-items: baseline; gap: 12px; margin: 0 0 18px; }
+  .kicker .n { color: var(--ink-5); font-family: var(--mono); font-size: 11px; letter-spacing: .04em; }
+  h2 { margin: 0; font-size: 30px; line-height: 1.1; font-weight: 500; letter-spacing: -.018em; }
+  .lede { margin: 12px 0 0; max-width: 72ch; color: var(--ink-3); font-size: 14px; line-height: 1.6; }
+  .rule { height: 1px; background: var(--rule-soft); margin: 30px 0 0; }
+
+  /* ---------- overview cards ---------- */
+  .overview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 28px; }
+  .ov-card {
+    min-height: 172px; padding: 22px; border-radius: 28px;
+    background: var(--wash); display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .ov-card .num { font-family: var(--mono); font-size: 11px; color: var(--ink-5); }
+  .ov-card h3 { margin: 26px 0 8px; font-size: 19px; line-height: 1.2; font-weight: 500; letter-spacing: -.012em; }
+  .ov-card p { margin: 0; color: var(--ink-3); font-size: 13px; line-height: 1.55; }
+
+  /* ---------- layout diagram ---------- */
+  .diagram {
+    margin-top: 24px; border-radius: 28px; background: var(--surface-2);
+    padding: 22px; overflow: hidden;
+  }
+  .browser {
+    border-radius: 18px; background: var(--bg); overflow: hidden;
+    box-shadow: 0 1px 0 rgba(23, 24, 26, .04);
+  }
+  .banner { height: 24px; background: var(--banner); display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .banner i { display: block; height: 5px; border-radius: 99px; background: rgba(255, 255, 255, .28); }
+  .banner i:nth-child(1) { width: 74px; }
+  .banner i:nth-child(2) { width: 32px; background: rgba(255, 255, 255, .55); }
+  .mininav { height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--rule-soft); }
+  .mininav .logo { width: 16px; height: 16px; border-radius: 5px; background: var(--ink); }
+  .mininav .ln { width: 34px; height: 6px; border-radius: 99px; background: var(--wash-strong); }
+  .mininav .search { margin-left: auto; width: 150px; height: 22px; border-radius: 999px; background: var(--wash); }
+  .mininav .cta { width: 64px; height: 22px; border-radius: 999px; background: var(--ink); }
+  .minihero { padding: 34px 20px 24px; text-align: center; }
+  .minihero .ph { width: 92px; height: 8px; margin: 0 auto 14px; border-radius: 99px; background: var(--wash-strong); }
+  .minihero .h { width: min(410px, 74%); height: 22px; margin: 0 auto 10px; border-radius: 6px; background: var(--ink); opacity: .86; }
+  .minihero .s { width: min(330px, 62%); height: 7px; margin: 0 auto 8px; border-radius: 99px; background: var(--wash-strong); }
+  .minihero .s2 { width: min(240px, 46%); }
+  .minihero .b { width: 76px; height: 24px; margin: 14px auto 0; border-radius: 999px; background: var(--ink); }
+  .minichips { display: flex; gap: 7px; padding: 0 14px 14px; }
+  .minichips i { display: block; height: 20px; width: 52px; border-radius: 999px; background: var(--wash); }
+  .minigrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 14px 16px; }
+  .minicard { height: 118px; border-radius: 12px; background: var(--wash); position: relative; overflow: hidden; }
+  .minicard.tall { height: 150px; }
+  .minicard:after {
+    content: ""; position: absolute; left: 50%; top: 50%; translate: -50% -50%;
+    width: 58%; height: 46%; border-radius: 10px; background: var(--bg);
+    box-shadow: 0 8px 18px rgba(23, 24, 26, .07);
+  }
+  .minicard.c1:after { background: radial-gradient(circle at 32% 42%, #ff6b6b 0 18%, transparent 19%), radial-gradient(circle at 62% 34%, #ffd166 0 22%, transparent 23%), radial-gradient(circle at 52% 72%, #06d6a0 0 26%, transparent 27%), #b388ff; }
+  .minicard.c2:after { background: linear-gradient(90deg, var(--teal) 0 42%, var(--blue) 42% 60%, var(--purple) 60% 72%, var(--pink) 72% 78%, var(--green) 78% 84%, var(--surface-2) 84%); }
+  .minicard.c3:after { background: var(--bg); }
+  .minicard .badge { position: absolute; left: 8px; top: 8px; width: 28px; height: 10px; border-radius: 99px; background: var(--bg); z-index: 2; }
+  .diagram-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .diagram-meta .chip { height: 30px; font-size: 12px; }
+
+  /* ---------- spec grid ---------- */
+  .specs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+  .spec { padding: 20px; border-radius: 20px; background: var(--wash); }
+  .spec .v { font-size: 26px; line-height: 1.05; font-weight: 500; letter-spacing: -.02em; }
+  .spec .k { margin-top: 8px; color: var(--ink-4); font-size: 12px; line-height: 1.45; }
+
+  /* ---------- swatches ---------- */
+  .swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 22px; }
+  .sw { border-radius: 16px; overflow: hidden; background: var(--wash); }
+  .sw .cap { height: 64px; display: flex; align-items: flex-end; padding: 9px 10px; font-size: 11px; font-family: var(--mono); }
+  .sw .meta { padding: 9px 10px 11px; font-size: 11px; line-height: 1.45; color: var(--ink-4); }
+  .sw .meta b { display: block; color: var(--ink-2); font-size: 11.5px; font-weight: 500; }
+  .sw.surface .cap { background: var(--surface); }
+  .sw.surface2 .cap { background: var(--surface-2); }
+  .sw.surface3 .cap { background: var(--surface-3); }
+  .sw.wash .cap { background: var(--wash); }
+  .sw.ink .cap { background: var(--ink); color: var(--bg); }
+  .sw.solid .cap { background: var(--solid); color: var(--on-solid); }
+  .sw.ok .cap { background: var(--ok); color: #fff; }
+  .sw.signal .cap { background: var(--signal); color: #fff; }
+  .sw.ember .cap { background: var(--ember); color: #fff; }
+
+  .palette-row { display: grid; grid-template-columns: 1.2fr .8fr; gap: 12px; margin-top: 12px; }
+  .palette-note { padding: 22px; border-radius: 20px; background: var(--wash); }
+  .palette-note h3 { margin: 0 0 10px; font-size: 15px; font-weight: 500; }
+  .palette-note p { margin: 0; color: var(--ink-3); font-size: 13px; line-height: 1.6; }
+  .palette-note code { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); background: var(--wash); padding: 1px 5px; border-radius: 5px; }
+
+  /* ---------- dark promo ---------- */
+  .dark-block {
+    margin-top: 12px; border-radius: 28px; background: #000; color: #fff;
+    padding: 54px 22px; text-align: center; position: relative; overflow: hidden;
+  }
+  .dark-block .glow {
+    position: absolute; width: 520px; height: 520px; border-radius: 50%;
+    left: 50%; top: 50%; translate: -50% -50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, .07), transparent 62%);
+    pointer-events: none;
+  }
+  .dark-block .mark2 {
+    width: 62px; height: 62px; margin: 0 auto 20px; border-radius: 18px;
+    background: linear-gradient(145deg, #3a3a3a, #cfcfcf); position: relative;
+  }
+  .dark-block .mark2:after {
+    content: ""; position: absolute; inset: 20px; border: 2px solid #0d0d0d; border-radius: 7px;
+    transform: rotate(-8deg);
+  }
+  .dark-block h3 { margin: 0; font-size: clamp(30px, 4vw, 40px); line-height: 1.08; font-weight: 500; letter-spacing: -.02em; }
+  .dark-block p { margin: 14px auto 0; max-width: 44ch; color: #9a9a9a; font-size: 16px; line-height: 1.55; }
+  .white-pill {
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-top: 26px; height: 40px; padding: 0 24px; border: 0; border-radius: 999px;
+    background: #fff; color: #000; font-size: 14px; font-weight: 500;
+    transition: opacity .14s, scale .2s var(--ease);
+  }
+  .white-pill:active { scale: .96; }
+
+  /* ---------- typography ---------- */
+  .type-panel { padding: 26px; border-radius: 28px; background: var(--wash); margin-top: 22px; }
+  .type-row { display: grid; grid-template-columns: 130px 1fr; gap: 18px; align-items: baseline; padding: 15px 0; border-top: 1px solid var(--rule-soft); }
+  .type-row:first-child { border-top: 0; padding-top: 0; }
+  .type-row:last-child { padding-bottom: 0; }
+  .type-key { color: var(--ink-4); font-family: var(--mono); font-size: 11px; line-height: 1.5; }
+  .type-key b { display: block; color: var(--ink-2); font-family: var(--font); font-size: 12px; font-weight: 500; }
+  .t-hero { font-size: 40px; line-height: 1.1; font-weight: 500; letter-spacing: -.022em; }
+  .t-h2 { font-size: 30px; line-height: 1.1; font-weight: 500; letter-spacing: -.018em; }
+  .t-h3 { font-size: 19px; line-height: 1.2; font-weight: 500; letter-spacing: -.012em; }
+  .t-sub { font-size: 16px; line-height: 1.55; color: var(--muted); }
+  .t-body { font-size: 13px; line-height: 1.5; }
+  .t-ui { font-size: 13px; line-height: 1.4; font-weight: 500; }
+  .t-label { font-size: 12.5px; line-height: 1.2; font-weight: 500; color: var(--ink-3); }
+  .t-badge { font-size: 11px; line-height: 1.2; font-weight: 500; }
+
+  /* ---------- components ---------- */
+  .comp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 22px; }
+  .comp {
+    padding: 24px; border-radius: 28px; background: var(--wash);
+    display: flex; flex-direction: column; gap: 18px; min-height: 220px;
+  }
+  .comp .label { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ink-4); font-family: var(--mono); font-size: 11px; }
+  .comp .demo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .btn-primary {
+    height: 36px; padding: 0 15px; border: 0; border-radius: 999px;
+    background: var(--ink); color: var(--bg); font-size: 13px; font-weight: 500;
+    transition: opacity .14s, scale .2s var(--ease);
+  }
+  .btn-primary:active { scale: .96; }
+  .btn-secondary {
+    height: 36px; padding: 0 15px; border: 0; border-radius: 999px;
+    background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 500;
+    box-shadow: inset 0 0 0 1px var(--rule);
+  }
+  .btn-hero {
+    height: 40px; padding: 0 20px; border: 0; border-radius: 999px;
+    background: var(--ink); color: var(--bg); font-size: 15px; font-weight: 500;
+  }
+  .searchbar {
+    display: flex; align-items: center; gap: 8px; width: 100%; height: 40px;
+    padding: 0 14px; border-radius: 999px; background: var(--wash); color: var(--ink-4); font-size: 14px;
+  }
+  .searchbar .kbd { margin-left: auto; color: var(--ink-5); font-size: 11px; }
+  .searchbar svg { flex: 0 0 auto; opacity: .72; }
+
+  .seg {
+    display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--wash);
+  }
+  .seg button {
+    height: 32px; padding: 0 14px; border: 0; border-radius: 999px;
+    background: transparent; color: var(--ink-3); font-size: 12.5px; font-weight: 500;
+    transition: background .18s, color .18s;
+  }
+  .seg button[data-on="true"] { background: var(--bg); color: var(--ink); }
+
+  .preview-card {
+    flex: 1; min-height: 150px; border-radius: 20px; background: var(--bg);
+    display: grid; place-items: center; position: relative; overflow: hidden;
+  }
+  .preview-card:before {
+    content: ""; width: 62%; height: 58%; border-radius: 12px;
+    background:
+      radial-gradient(circle at 30% 40%, #ff6b6b 0 15%, transparent 16%),
+      radial-gradient(circle at 62% 30%, #ffd166 0 19%, transparent 20%),
+      radial-gradient(circle at 48% 74%, #06d6a0 0 22%, transparent 23%),
+      linear-gradient(135deg, #b388ff, #8ec5ff);
+    box-shadow: 0 14px 30px rgba(23, 24, 26, .1);
+    transform: rotate(-5deg);
+  }
+  .preview-card .badge2 {
+    position: absolute; left: 12px; top: 12px; height: 22px; padding: 0 10px;
+    border-radius: 999px; background: var(--bg); display: flex; align-items: center;
+    font-size: 11px; font-weight: 500; color: var(--ink);
+  }
+
+  .tool-demo { display: flex; flex-direction: column; gap: 10px; }
+  .tool-row { display: flex; align-items: flex-start; gap: 8px; }
+  .tool-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .tool-name { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink); }
+  .tool-params {
+    display: block; margin: 0; padding: 4px 6px; border-radius: 6px;
+    background: var(--wash); color: var(--ink-3); font-family: var(--mono);
+    font-size: 11px; line-height: 1.45; word-break: break-all; white-space: pre-wrap;
+  }
+  .tool-ok { color: var(--ok); flex: 0 0 auto; }
+  .tool-dur { color: var(--ink-4); font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
+
+  .overlay-demo {
+    border-radius: 20px; background: var(--bg); padding: 14px;
+    display: grid; grid-template-columns: 1.3fr .7fr; gap: 8px; flex: 1;
+  }
+  .overlay-preview { border-radius: 14px; background: var(--surface-2); position: relative; }
+  .overlay-preview:after {
+    content: ""; position: absolute; inset: 22% 24%; border-radius: 10px; background: var(--bg);
+    box-shadow: 0 8px 20px rgba(23, 24, 26, .06);
+  }
+  .overlay-side { border-radius: 14px; background: var(--surface-2); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .overlay-side .ln { height: 5px; border-radius: 99px; background: var(--wash-strong); }
+  .overlay-side .ln.w1 { width: 62%; }
+  .overlay-side .ln.w2 { width: 82%; }
+  .overlay-side .ln.w3 { width: 48%; }
+  .overlay-side .spacer { flex: 1; }
+  .overlay-side .b1 { height: 22px; border-radius: 99px; box-shadow: inset 0 0 0 1px var(--rule); }
+  .overlay-side .b2 { height: 22px; border-radius: 99px; background: var(--ink); }
+
+  /* ---------- motion / responsive tables ---------- */
+  .table { margin-top: 22px; border-radius: 20px; overflow: hidden; background: var(--wash); }
+  .tr { display: grid; grid-template-columns: 180px 1fr 190px; gap: 16px; padding: 14px 18px; border-top: 1px solid var(--rule-soft); font-size: 12.5px; line-height: 1.5; }
+  .tr:first-child { border-top: 0; color: var(--ink-4); font-family: var(--mono); font-size: 11px; }
+  .tr b { font-weight: 500; color: var(--ink-2); }
+  .tr .muted { color: var(--ink-3); }
+  .tr code { font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+
+  /* ---------- nuphus mapping ---------- */
+  .map { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 22px; }
+  .map-card { padding: 22px; border-radius: 20px; background: var(--wash); }
+  .map-card h3 { margin: 0 0 10px; font-size: 15px; font-weight: 500; }
+  .map-card ul { margin: 0; padding-left: 17px; color: var(--ink-3); font-size: 13px; line-height: 1.65; }
+  .map-card li + li { margin-top: 5px; }
+  .map-card code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); padding: 1px 5px; border-radius: 5px; }
+  .warn {
+    margin-top: 12px; padding: 18px 20px; border-radius: 20px;
+    background: var(--wash); border-left: 2px solid var(--ink);
+    color: var(--ink-3); font-size: 13px; line-height: 1.6;
+  }
+  .warn b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- footer ---------- */
+  footer { padding: 76px 0 36px; color: var(--ink-4); font-size: 12px; }
+  footer .row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px; border-top: 1px solid var(--rule-soft); padding-top: 24px; }
+  footer .src { color: var(--ink-4); }
+  footer a { text-decoration: none; border-bottom: 1px solid var(--rule); padding-bottom: 1px; }
+
+  @media (max-width: 900px) {
+    .overview { grid-template-columns: 1fr; }
+    .specs { grid-template-columns: repeat(2, 1fr); }
+    .swatches { grid-template-columns: repeat(3, 1fr); }
+    .palette-row { grid-template-columns: 1fr; }
+    .comp-grid { grid-template-columns: 1fr; }
+    .map { grid-template-columns: 1fr; }
+    .tr { grid-template-columns: 120px 1fr; }
+    .tr span:last-child { display: none; }
+  }
+
+  @media (max-width: 620px) {
+    .shell { padding: 0 14px; }
+    .topbar { padding: 0 14px; height: 58px; }
+    .topnav { display: none; }
+    .solid-pill { display: none; }
+    .hero { padding: 58px 0 44px; }
+    .hero h1 { font-size: 38px; line-height: 1.05; letter-spacing: -.018em; }
+    .hero .sub { font-size: 15px; }
+    .specs { grid-template-columns: 1fr 1fr; }
+    .swatches { grid-template-columns: 1fr 1fr; }
+    .type-row { grid-template-columns: 1fr; gap: 6px; }
+    .t-hero { font-size: 34px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="mark">◎</span> 视觉参考</div>
+  <nav class="topnav" aria-label="Reference sections">
+    <span class="on">布局</span><span>颜色</span><span>字体</span><span>组件</span><span>动效</span>
+  </nav>
+  <div class="top-actions">
+    <button class="theme-btn" id="themeBtn" type="button" aria-live="polite">切换深色</button>
+    <span class="solid-pill">Reference</span>
+  </div>
+</header>
+
+<main class="shell">
+  <div class="wrap">
+    <section class="hero">
+      <span class="pill">Web analysis · 2026</span>
+      <h1>一个把颜色藏起来的界面</h1>
+      <p class="sub">这套界面本身几乎是纯单色，彩色只存在于被展示的组件里。大留白、浅灰大圆角容器、黑色胶囊主按钮，构成了一套安静但不空的画廊式视觉系统。</p>
+      <div class="meta">
+        <span class="chip"><span class="dot"></span>桌面 1440 / 1024 / 768</span>
+        <span class="chip"><span class="dot"></span>移动 390</span>
+        <span class="chip"><span class="dot"></span>Light + Dark</span>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="overview">
+      <div class="kicker"><span class="n">00</span><h2 id="overview">设计 DNA</h2></div>
+      <p class="lede">不是“极简风格”四个字，而是三条明确取舍：界面退后、内容上前、动作只有一个。</p>
+      <div class="overview">
+        <article class="ov-card">
+          <span class="num">01 / chrome</span>
+          <div>
+            <h3>安静的外壳</h3>
+            <p>导航、标签、边框全部低对比。没有品牌色铺底，也没有装饰性渐变。彩色只留给作品本身。</p>
+          </div>
+        </article>
+        <article class="ov-card">
+          <span class="num">02 / surface</span>
+          <div>
+            <h3>浅灰大圆角</h3>
+            <p>卡片和面板统一 28px 圆角，用 6% 墨色洗底代替边框和阴影。层级靠底色深浅，而不是线框。</p>
+          </div>
+        </article>
+        <article class="ov-card">
+          <span class="num">03 / action</span>
+          <div>
+            <h3>黑色胶囊</h3>
+            <p>主操作永远是黑色药丸，白字。次要操作退回透明加 1px 内描边。全站只允许一个视觉强动作。</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="layout">
+      <div class="kicker"><span class="n">01</span><h2 id="layout">布局与节奏</h2></div>
+      <p class="lede">桌面 20px 边距，移动 14px。没有 max-width 居中容器，内容直接撑满视口。网格是瀑布流列，不是等高卡片矩阵。</p>
+
+      <div class="diagram" aria-label="Layout diagram">
+        <div class="browser">
+          <div class="banner"><i></i><i></i></div>
+          <div class="mininav">
+            <span class="logo"></span><span class="ln"></span><span class="ln"></span><span class="ln"></span>
+            <span class="search"></span><span class="cta"></span>
+          </div>
+          <div class="minihero">
+            <div class="ph"></div>
+            <div class="h"></div>
+            <div class="s"></div><div class="s s2"></div>
+            <div class="b"></div>
+          </div>
+          <div class="minichips"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="minigrid">
+            <div class="minicard c1 tall"><span class="badge"></span></div>
+            <div class="minicard c2"><span class="badge"></span></div>
+            <div class="minicard c3"><span class="badge"></span></div>
+            <div class="minicard c2"><span class="badge"></span></div>
+            <div class="minicard c1"><span class="badge"></span></div>
+            <div class="minicard c3 tall"><span class="badge"></span></div>
+          </div>
+        </div>
+        <div class="diagram-meta">
+          <span class="chip">banner 36px</span>
+          <span class="chip">导航行 40px</span>
+          <span class="chip">hero 约 344px</span>
+          <span class="chip">卡片间距 12px</span>
+          <span class="chip">圆角 28px</span>
+        </div>
+      </div>
+
+      <div class="specs">
+        <div class="spec"><div class="v">20px</div><div class="k">桌面左右边距。移动端降到 14px。</div></div>
+        <div class="spec"><div class="v">3 / 2 / 1</div><div class="k">1440 三列，1024 与 768 两列，760 以下单列。</div></div>
+        <div class="spec"><div class="v">12px</div><div class="k">列间距与卡片纵向间距。小到读成一个整体，大到能分开。</div></div>
+        <div class="spec"><div class="v">28px</div><div class="k">卡片、详情面板、深色区块统一圆角。</div></div>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="color">
+      <div class="kicker"><span class="n">02</span><h2 id="color">颜色</h2></div>
+      <p class="lede">核心是一个 6 级墨色梯度加一层 6% 透明洗底。主色不是某个蓝或紫，而是“墨”。彩色只出现在组件预览、状态点和极少数的信号色里。</p>
+
+      <div class="swatches">
+        <div class="sw surface"><div class="cap"></div><div class="meta"><b>surface</b>#f7f7f6 · 页面底</div></div>
+        <div class="sw surface2"><div class="cap"></div><div class="meta"><b>surface-2</b>#f1f1f0 · 面板</div></div>
+        <div class="sw surface3"><div class="cap"></div><div class="meta"><b>surface-3</b>#ecebe7 · 更深一层</div></div>
+        <div class="sw wash"><div class="cap"></div><div class="meta"><b>wash</b>rgba(23,24,26,.06) · 卡片/控件</div></div>
+        <div class="sw ink"><div class="cap"></div><div class="meta"><b>ink</b>#17181a · 主文字/主按钮</div></div>
+        <div class="sw solid"><div class="cap"></div><div class="meta"><b>solid</b>#0e0f11 · 深色块</div></div>
+        <div class="sw surface"><div class="cap" style="background: var(--ink-2); color:#fff">ink-2</div><div class="meta"><b>ink-2</b>#3c3b37 · 次级控件</div></div>
+        <div class="sw surface"><div class="cap" style="background: var(--ink-3); color:#fff">ink-3</div><div class="meta"><b>ink-3</b>#5c5b56 · 说明文字</div></div>
+        <div class="sw surface"><div class="cap" style="background: var(--ink-4); color:#fff">ink-4</div><div class="meta"><b>ink-4</b>#6f6e68 · 弱化链接</div></div>
+        <div class="sw surface"><div class="cap" style="background: var(--muted); color:#fff">muted</div><div class="meta"><b>muted</b>#73726d · Hero 副标题</div></div>
+        <div class="sw ok"><div class="cap">ok</div><div class="meta"><b>ok</b>#15803d · 成功</div></div>
+        <div class="sw signal"><div class="cap">signal</div><div class="meta"><b>signal</b>#2231dd · 极少信号色</div></div>
+      </div>
+
+      <div class="palette-row">
+        <div class="palette-note">
+          <h3>两条硬规则</h3>
+          <p>第一，界面 chrome 不使用品牌色，彩色只属于内容。第二，层级优先用 <code>wash</code> 透明洗底和圆角表达，不堆边框、阴影、描边三件套。唯一允许的渐变是顶部促销条的 MCP 文字和组件内部的视觉素材。</p>
+        </div>
+        <div class="palette-note">
+          <h3>Dark theme</h3>
+          <p><code>--bg #000</code>，<code>--surface #0f0f0f</code>，<code>--surface-2 #181818</code>，<code>--ink #fff</code>。深色下把 wash 提到 9%，成功色提亮到 <code>#34d17a</code>，避免在纯黑上发闷。</p>
+        </div>
+      </div>
+
+      <div class="dark-block">
+        <span class="glow"></span>
+        <div class="mark2"></div>
+        <h3>纯黑是最强的对比层</h3>
+        <p>深色区块不靠边框区分，直接换成纯黑底，四周留 20px 白边。白色胶囊按钮在纯黑上就是唯一焦点。</p>
+        <button class="white-pill" type="button">Get Pro</button>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="type">
+      <div class="kicker"><span class="n">03</span><h2 id="type">字体与层级</h2></div>
+      <p class="lede">以 Inter 为主，标题统一 500 而不是 700。大标题靠字号、紧字距和负字距建立气场，不靠粗体。正文 13px / 1.5，是产品型密度。</p>
+
+      <div class="type-panel">
+        <div class="type-row">
+          <div class="type-key"><b>Hero</b>40 / 1.1 / -0.022em</div>
+          <div class="t-hero">Interactive UI Components</div>
+        </div>
+        <div class="type-row">
+          <div class="type-key"><b>Section</b>30 / 1.1 / -0.018em</div>
+          <div class="t-h2">Access +160 blocks</div>
+        </div>
+        <div class="type-row">
+          <div class="type-key"><b>Panel title</b>19 / 1.2 / 500</div>
+          <div class="t-h3">Context meter</div>
+        </div>
+        <div class="type-row">
+          <div class="type-key"><b>Subtitle</b>16 / 1.55</div>
+          <div class="t-sub">A library of interactive React components and micro-interactions you can explore and take straight into your projects.</div>
+        </div>
+        <div class="type-row">
+          <div class="type-key"><b>Body</b>13 / 1.5</div>
+          <div class="t-body">Every block here, your AI agent can add for you. The same 13px body is used in the FAQ answer, panel description and helper text.</div>
+        </div>
+        <div class="type-row">
+          <div class="type-key"><b>UI label</b>13 / 500</div>
+          <div class="t-ui">Add to bench · Join for free · Get Pro</div>
+        </div>
+        <div class="type-row">
+          <div class="type-key"><b>Control</b>12.5 / 500</div>
+          <div class="t-label">Light · Dark · Bar · Field · Colour · Mono</div>
+        </div>
+        <div class="type-row">
+          <div class="type-key"><b>Badge</b>11 / 500</div>
+          <div class="t-badge">New · Sponsored · 94 signed up today</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="components">
+      <div class="kicker"><span class="n">04</span><h2 id="components">组件语言</h2></div>
+      <p class="lede">按钮、搜索、分段控件、卡片、详情面板，五类组件就构成了整套界面。共同点：大圆角、无重阴影、状态变化只改底色和透明度。</p>
+
+      <div class="comp-grid">
+        <div class="comp">
+          <div class="label"><span>buttons</span><span>36 / 40px</span></div>
+          <div class="demo">
+            <button class="btn-primary" type="button">Join for free</button>
+            <button class="btn-secondary" type="button">Share</button>
+            <button class="btn-hero" type="button">Get Pro</button>
+          </div>
+          <p class="lede" style="margin:0;font-size:12px">主按钮黑色胶囊，hover 只降透明度，按下 scale(.96)。次按钮透明底加 1px 内描边。没有渐变按钮。</p>
+        </div>
+
+        <div class="comp">
+          <div class="label"><span>search</span><span>40px / 999</span></div>
+          <div class="searchbar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+            Search
+            <span class="kbd">Ctrl K</span>
+          </div>
+          <p class="lede" style="margin:0;font-size:12px">默认是 6% 洗底胶囊。页面滚动后换成 74% 白 + 8px blur + 极淡投影，浮在内容上但不抢内容。</p>
+        </div>
+
+        <div class="comp">
+          <div class="label"><span>segmented control</span><span>32px thumb</span></div>
+          <div class="seg" id="segDemo" role="group" aria-label="Segmented control demo">
+            <button type="button" data-on="true">Light</button>
+            <button type="button" data-on="false">Dark</button>
+          </div>
+          <div class="seg" id="segDemo2" role="group" aria-label="Segmented control demo 2">
+            <button type="button" data-on="true">Bar</button>
+            <button type="button" data-on="false">Field</button>
+            <button type="button" data-on="false">Mono</button>
+          </div>
+          <p class="lede" style="margin:0;font-size:12px">轨道 6% 洗底，内边距 2px，白色滑块。未选项用 ink-3，选中项纯白底。整个控件高度 36px。</p>
+        </div>
+
+        <div class="comp">
+          <div class="label"><span>card</span><span>28px radius</span></div>
+          <div class="preview-card"><span class="badge2">New</span></div>
+          <p class="lede" style="margin:0;font-size:12px">卡片只有一层 6% 洗底和 28px 圆角，没有边框、没有投影。角标是 11px 白色胶囊，预览内容居中缩放。</p>
+        </div>
+
+        <div class="comp">
+          <div class="label"><span>execution row</span><span>Nuphus mapping</span></div>
+          <div class="tool-demo">
+            <div class="tool-row">
+              <div class="tool-main">
+                <span class="tool-name">system_shell</span>
+                <code class="tool-params">command: cargo test --all  cwd: /repo/nuphus</code>
+              </div>
+              <svg class="tool-ok" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 13 4 4L19 7"></path></svg>
+              <span class="tool-dur">(1.4s)</span>
+            </div>
+            <div class="tool-row">
+              <div class="tool-main">
+                <span class="tool-name">read_file</span>
+                <code class="tool-params">path: src/runtime/sub_task_loop.rs</code>
+              </div>
+              <svg class="tool-ok" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 13 4 4L19 7"></path></svg>
+              <span class="tool-dur">(312ms)</span>
+            </div>
+          </div>
+          <p class="lede" style="margin:0;font-size:12px">工具调用可直接借用这套结构：等宽工具名 + 洗底参数代码块 + 状态图标 + 括号耗时。</p>
+        </div>
+
+        <div class="comp">
+          <div class="label"><span>detail overlay</span><span>1000 × 640</span></div>
+          <div class="overlay-demo">
+            <div class="overlay-preview"></div>
+            <div class="overlay-side">
+              <div class="ln w1"></div><div class="ln w2"></div><div class="ln w3"></div>
+              <div class="spacer"></div>
+              <div class="b1"></div><div class="b2"></div>
+            </div>
+          </div>
+          <p class="lede" style="margin:0;font-size:12px">遮罩是 78% 白 + 12px blur + 130% 饱和。预览 688px，侧栏 300px，间距 12px，两个面板都是 28px 圆角。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="motion">
+      <div class="kicker"><span class="n">05</span><h2 id="motion">动效与响应式</h2></div>
+      <p class="lede">动效是短促、向外的弹簧感：进场升 8px 后落定，按下轻微缩小。没有弹跳、没有旋转、没有超过 600ms 的界面动效。</p>
+
+      <div class="table">
+        <div class="tr"><span>场景</span><span>做法</span><span>曲线 / 时长</span></div>
+        <div class="tr"><b>Hero 进场</b><span class="muted">pill → 标题 → 副标题 → CTA 依次上浮，间隔 60 / 140 / 220ms</span><code>cubic-bezier(.22,1,.36,1) · 620ms</code></div>
+        <div class="tr"><b>按钮按下</b><span class="muted">只缩放到 .96，不位移、不改色</span><code>scale .96 · 200ms</code></div>
+        <div class="tr"><b>导航 / 链接</b><span class="muted">颜色和底色渐变，按下缩到 .985</span><code>160ms · ease-out</code></div>
+        <div class="tr"><b>详情浮层</b><span class="muted">遮罩淡入，侧栏从右移 10px 并淡入</span><code>scrim 260ms · panel 280ms</code></div>
+        <div class="tr"><b>搜索栏</b><span class="muted">高度、内边距和底色过渡，滚动后切玻璃底</span><code>240ms · ease-soft</code></div>
+        <div class="tr"><b>响应式断点</b><span class="muted">760px 切移动导航；800px FAQ 收窄；620px 搜索隐藏</span><code>760 / 800 / 620</code></div>
+        <div class="tr"><b>移动详情</b><span class="muted">760px 以下从双栏变成底部抽屉：预览 54%，控制 46%</span><code>inset 12px · 28px radius</code></div>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="nuphus">
+      <div class="kicker"><span class="n">06</span><h2 id="nuphus">翻译到 Nuphus</h2></div>
+      <p class="lede">这套语言是“Explore / 画廊”型界面，Nuphus 是“Operate / 日常工具”型界面。学它的 token 和控件语言，不要照搬它的落地页构图。</p>
+
+      <div class="map">
+        <div class="map-card">
+          <h3>直接可用的</h3>
+          <ul>
+            <li>把桌面外壳统一成 <code>ink</code> 六级灰 + <code>wash</code> 洗底，减少现有边框数量。</li>
+            <li>主按钮统一黑色胶囊；次级按钮透明加 1px 内描边；危险操作才用红。</li>
+            <li>侧栏、气泡、工具面板用 20 / 24 / 28px 圆角；阴影只留给浮层和弹窗。</li>
+            <li>标题用 500 + 负字距；正文 13 / 1.5；说明文字用 <code>ink-3/4</code>，不要用纯灰。</li>
+            <li>工具调用沿用“名称 + 洗底参数代码块 + 状态图标 + 括号耗时”，与移动端执行过程一致。</li>
+          </ul>
+        </div>
+        <div class="map-card">
+          <h3>需要克制的</h3>
+          <ul>
+            <li>不要把首页那种巨大 hero 和大留白搬进聊天主界面，日常使用要密度。</li>
+            <li>卡片网格适合画廊，不适合消息流；消息流仍用线性时间轴。</li>
+            <li>彩色只用于状态和工具结果，界面本身保持单色，避免聊天记录变成调色盘。</li>
+            <li>动效只保留按压和浮层入场，流式输出区域不要加额外动画，避免与 token 刷新抢注意力。</li>
+            <li>分段控件适合设置面板，不适合高频主操作；主操作仍然只用黑色胶囊。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="warn">
+        <b>一句判断：</b>这套语言最值得学的不是“长得像”，而是它的取舍顺序。先用中性色把界面压平，再把唯一的黑色动作放到最重要的地方，最后才让内容自己带颜色。Nuphus 已经有内容色彩，缺的是这层安静的壳。
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer class="shell">
+  <div class="wrap">
+    <div class="row">
+      <span class="src">内部视觉基准 · 仅作视觉系统分析</span>
+      <span>Layout · Color · Type · Components · Motion</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var btn = document.getElementById('themeBtn');
+    var root = document.documentElement;
+    function setTheme(theme) {
+      root.setAttribute('data-theme', theme);
+      btn.textContent = theme === 'dark' ? '切换浅色' : '切换深色';
+    }
+    btn.addEventListener('click', function () {
+      setTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    });
+    setTheme('light');
+
+    function bindSeg(id) {
+      var seg = document.getElementById(id);
+      if (!seg) return;
+      seg.addEventListener('click', function (event) {
+        var target = event.target.closest('button');
+        if (!target) return;
+        Array.prototype.forEach.call(seg.querySelectorAll('button'), function (b) {
+          b.setAttribute('data-on', b === target ? 'true' : 'false');
+        });
+      });
+    }
+    bindSeg('segDemo');
+    bindSeg('segDemo2');
+  })();
+</script>
+</body>
+</html>

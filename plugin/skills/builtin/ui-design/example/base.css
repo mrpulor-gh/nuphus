@@ -1,0 +1,75 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink-1);
+  font: 400 var(--fz-md)/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 按钮：一屏只允许一个实心 */
+.btn {
+  height: 36px; padding: 0 16px;
+  border: 0; border-radius: var(--r-pill);
+  font: 500 var(--fz-md)/1 var(--font-ui);
+  cursor: pointer;
+  transition: opacity var(--dur-fast), scale var(--dur-fast) var(--ease-swift);
+}
+.btn:active { scale: .96; }
+.btn-primary { background: var(--ink-1); color: var(--bg); }
+.btn-primary:hover { opacity: .88; }
+.btn-secondary {
+  background: transparent; color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.btn-secondary:hover { color: var(--ink-1); }
+
+/* 卡片：只有 wash 和圆角 */
+.card {
+  padding: var(--sp-5);
+  border-radius: var(--r-lg);
+  background: var(--wash);
+}
+.card-title { font: 500 var(--fz-lg)/1.2 var(--font-ui); margin: 0 0 6px; }
+.card-desc  { font-size: var(--fz-md); color: var(--ink-4); margin: 0; }
+
+/* 分段控件 */
+.seg {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border-radius: var(--r-pill); background: var(--wash);
+}
+.seg > button {
+  height: 30px; padding: 0 14px; border: 0; border-radius: var(--r-pill);
+  background: transparent; color: var(--ink-3);
+  font: 500 var(--fz-sm)/1 var(--font-ui); cursor: pointer;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.seg > button[aria-pressed="true"] { background: var(--raise); color: var(--ink-1); }
+
+/* 输入 */
+.input {
+  width: 100%; height: 40px; padding: 0 14px;
+  border: 0; border-radius: var(--r-md);
+  background: var(--wash); color: var(--ink-1);
+  font: 400 var(--fz-md)/1 var(--font-ui);
+}
+.input::placeholder { color: var(--ink-5); }
+.input:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+
+/* 徽章与状态点：点只有两色 */
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 9px;
+  border-radius: var(--r-pill); background: var(--wash);
+  font: 500 var(--fz-xs)/1 var(--font-ui); color: var(--ink-3);
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-4); }
+.dot[data-live] { background: var(--signal); }
+
+/* 浮层 */
+.scrim { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(12px) saturate(130%); }
+.panel {
+  border-radius: var(--r-xl); background: var(--bg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .10);
+}

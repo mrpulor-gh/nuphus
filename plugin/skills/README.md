@@ -42,7 +42,7 @@ plugin/skills/
 | `mcp-tools` | MCP 工具参考 | MCP (Model Context Protocol) 集成参考：V2 步骤格式 do.mcp（server/tool/with）、capture 字符串规范、工具发现（tools/list 自省）、已配置 server 列表 | `builtin/mcp-tools/` |
 | `nuphus-modules` | Nuphus 项目模块知识 | Nuphus 32 个模块（core 13 / tauri 8 / frontend 11）结构与作用的自包含摘要库，含项目骨架速答、全局坑速查、问题→摘要路由表 | `builtin/nuphus-modules/` |
 | `tools-internal` | 内置工具手册 | Nuphus 工具页 23 个内部机制命令参数手册（PDF 7 / 图像 7 / 视频 5 / 音频 3 含语音克隆 / 文档 1） | `builtin/tools-internal/` |
-| `ui-design` | UI 设计规范 | Agent 平台前端设计规范：颜色/字体/间距 token、四阶段决策协议、AI 味反模式检查清单、组件复用指南、动效预算 | `builtin/ui-design/` |
+| `ui-design` | 默认设计语言 | Nuphus 带出项目的默认设计语言：单色 chrome、wash 分层、大圆角、一个主行动。含可直接复制的 tokens.css 与基元 CSS、布局节奏、动效四层、文案口径、禁止清单与验收项；用户未指定风格且项目无既有设计系统时默认使用 | `builtin/ui-design/` |
 | `workflow-design` | 工作流设计规范 | 工作流编排核心能力：V2 步骤 schema（14 种 Action）、变量模板与条件表达式、params.json 固化规范、外部输入（inputs 声明）、设计模式库、验证闭环方法论、ui-maps 经验闭环与常见陷阱 | `builtin/workflow-design/` |
 | `workflow-interaction` | 工作流交互手册 | 探索与操作真实界面的交互细则：目标绑定、语义观察与分页、增强模式（desktop_agent_step）交接、输入与提交纪律、稳定 locator 固化、用户交互粒度、截图卫生 | `builtin/workflow-interaction/` |
 | `workflow-recovery` | 工作流故障恢复 | workflow_run 失败后的恢复协议：阻塞类型识别、就地解决优先级（语义候选/增强判断/视觉回退）、同 id 断点续连、设计缺陷与运行时阻塞的判界、重试上限与汇报 | `builtin/workflow-recovery/` |

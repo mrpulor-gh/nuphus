@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>工作台 · 默认设计语言示例</title>
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="base.css" />
+<style>
+  /* 页面级布局：只用 token，不新增颜色与字号 */
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+
+  header {
+    display: flex; align-items: center; gap: var(--sp-4);
+    height: 64px;
+  }
+  .brand { font: 500 var(--fz-lg)/1 var(--font-ui); letter-spacing: -.01em; }
+  header .seg { margin-left: auto; }
+
+  /* 大容器：28px，包住首屏唯一主行动 */
+  .hero {
+    margin-top: var(--sp-7);
+    padding: var(--sp-8) var(--sp-8) var(--sp-7);
+    border-radius: var(--r-xl);
+    background: var(--wash);
+  }
+  .hero h1 {
+    margin: 0;
+    font: 500 var(--fz-2xl)/1.15 var(--font-ui);
+    letter-spacing: -.02em;
+  }
+  .hero p { margin: var(--sp-2) 0 0; color: var(--ink-4); }
+  .hero .actions { margin-top: var(--sp-5); display: flex; gap: var(--sp-2); }
+
+  /* 统计：三块，只做信息，不做装饰 */
+  .stats {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    margin-top: 12px;
+  }
+  .stat { padding: var(--sp-5); border-radius: var(--r-lg); background: var(--wash); }
+  .stat b {
+    display: block;
+    font: 500 var(--fz-xl)/1.1 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat span { display: block; margin-top: 6px; font-size: var(--fz-sm); color: var(--ink-4); }
+
+  /* 分组标题 + 卡片网格 */
+  .section-head {
+    display: flex; align-items: baseline; gap: var(--sp-3);
+    margin: var(--sp-8) 0 var(--sp-3);
+  }
+  .section-head h2 { margin: 0; font: 500 var(--fz-lg)/1.2 var(--font-ui); }
+  .section-head span { font-size: var(--fz-sm); color: var(--ink-4); }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+  .task {
+    display: grid; gap: var(--sp-3);
+    padding: var(--sp-5);
+    border-radius: var(--r-lg);
+    background: var(--wash);
+    transition: background var(--dur-fast);
+  }
+  .task:hover { background: var(--wash-strong); }
+  .task h3 { margin: 0; font: 500 var(--fz-md)/1.4 var(--font-ui); }
+  .task p { margin: 0; color: var(--ink-4); font-size: var(--fz-sm); }
+  .task .meta {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: var(--sp-1);
+  }
+  .task time { font-size: var(--fz-xs); color: var(--ink-4); font-variant-numeric: tabular-nums; }
+
+  footer {
+    margin: var(--sp-9) 0 var(--sp-8);
+    color: var(--ink-4); font-size: var(--fz-sm);
+  }
+
+  @media (max-width: 1024px) {
+    .grid, .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 760px) {
+    .wrap { padding: 0 14px; }
+    .grid, .stats { grid-template-columns: 1fr; }
+    .hero { padding: var(--sp-6) var(--sp-5); }
+    .hero .actions { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="brand">工作台</span>
+    <div class="seg" role="group" aria-label="筛选任务">
+      <button type="button" aria-pressed="true">全部</button>
+      <button type="button" aria-pressed="false">进行中</button>
+      <button type="button" aria-pressed="false">已完成</button>
+    </div>
+    <button type="button" class="btn btn-secondary" id="theme">深色</button>
+  </header>
+
+  <section class="hero">
+    <h1>本周有 6 项任务</h1>
+    <p>2 项进行中，2 项待审。</p>
+    <div class="actions">
+      <button type="button" class="btn btn-primary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" aria-hidden="true" style="vertical-align:-2px; margin-right:6px">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        新建任务
+      </button>
+      <button type="button" class="btn btn-secondary">查看归档</button>
+    </div>
+  </section>
+
+  <section class="stats">
+    <div class="stat"><b>2</b><span>进行中</span></div>
+    <div class="stat"><b>2</b><span>待审</span></div>
+    <div class="stat"><b>18</b><span>本周完成</span></div>
+  </section>
+
+  <div class="section-head">
+    <h2>进行中</h2>
+    <span>按更新时间排序</span>
+  </div>
+
+  <section class="grid">
+    <article class="task">
+      <h3>重写导入校验</h3>
+      <p>兼容旧格式，补齐错误提示。</p>
+      <div class="meta">
+        <span class="badge"><i class="dot" data-live></i>进行中</span>
+        <time>今天 14:20</time>
+      </div>
+    </article>
+
+    <article class="task">
+      <h3>补齐空状态</h3>
+      <p>列表、搜索、筛选三处。</p>
+      <div class="meta">
+        <span class="badge"><i class="dot" data-live></i>进行中</span>
+        <time>今天 11:05</time>
+      </div>
+    </article>
+
+    <article class="task">
+      <h3>压缩首屏资源</h3>
+      <p>拆分首包，延迟加载图表。</p>
+      <div class="meta">
+        <span class="badge"><i class="dot"></i>待审</span>
+        <time>昨天 18:40</time>
+      </div>
+    </article>
+
+    <article class="task">
+      <h3>统一时间格式</h3>
+      <p>相对时间改为绝对时间。</p>
+      <div class="meta">
+        <span class="badge"><i class="dot"></i>待审</span>
+        <time>昨天 09:12</time>
+      </div>
+    </article>
+
+    <article class="task">
+      <h3>迁移账单导出</h3>
+      <p>改为流式写入，内存占用下降。</p>
+      <div class="meta">
+        <span class="badge"><i class="dot"></i>已完成</span>
+        <time>2 天前</time>
+      </div>
+    </article>
+
+    <article class="task">
+      <h3>拆分设置页</h3>
+      <p>按用途分成三组。</p>
+      <div class="meta">
+        <span class="badge"><i class="dot"></i>已完成</span>
+        <time>3 天前</time>
+      </div>
+    </article>
+  </section>
+
+  <footer>示例页面 · 由默认设计语言生成</footer>
+
+</div>
+
+<script>
+  // 主题：data-theme="dark" 在/不在，对应 tokens.css 的两套变量
+  const root = document.documentElement
+  const themeBtn = document.getElementById('theme')
+  themeBtn.addEventListener('click', () => {
+    const dark = root.dataset.theme === 'dark'
+    if (dark) delete root.dataset.theme
+    else root.dataset.theme = 'dark'
+    themeBtn.textContent = dark ? '深色' : '浅色'
+  })
+
+  // 分段控件：aria-pressed 驱动样式，不写额外 class
+  document.querySelectorAll('.seg').forEach((seg) => {
+    seg.addEventListener('click', (e) => {
+      const btn = e.target.closest('button')
+      if (!btn) return
+      seg.querySelectorAll('button').forEach((b) =>
+        b.setAttribute('aria-pressed', String(b === btn)),
+      )
+    })
+  })
+</script>
+</body>
+</html>

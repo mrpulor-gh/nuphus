@@ -1,198 +1,286 @@
 ---
-title: 通用 UI 设计方法论与去「AI味」规范
-id: ui-design-general
+title: 默认设计语言
+id: ui-design
 type: skill
-tags: [ui, design, css, tailwind, frontend, web, anti-ai, component]
+tags: [design, ui, visual-style, default-language, tokens, components, motion, copy, css]
 builtin: true
 ---
 
-# UI 设计方法论
+# 默认设计语言
 
-> 让 AI Agent 输出符合工业生产标准的专业级 UI，而非泛滥、雷同的「AI 味」设计。
+Nuphus 带出的界面，默认用这套语言。
+**用户没有指定风格、项目里也没有既有设计系统时，直接按本文产出，不要反问「你想要什么风格」。**
 
----
+取向：安静的壳，内容上前——单色 chrome、wash 分层、大圆角、一个主行动。
 
-## 一、 核心原则
+视觉基准（可渲染核对）：
+file:///C:/Users/Administrator/Nuphus/plugin/skills/builtin/ui-design/reference/design-reference.html
 
-**先推理，后构建。** 
-AI 最大的设计问题是跳过对业务逻辑和用户意图的深度分析，直接套用万能模板：居中 Hero 布局、饱和度过高的蓝紫渐变、无脑的 Inter 全家桶、以及满屏的毛玻璃卡片。这不叫设计，这叫向默认值妥协[cite: 3]。
+可运行示例（照本文生成，可直接打开）：
+file:///C:/Users/Administrator/Nuphus/plugin/skills/builtin/ui-design/example/index.html
 
-本 Skill 旨在每个设计决策点插入强制推理步骤，让最终产出的每一行样式都有据可查[cite: 3]。
+三条判据（任何页面成立）：
 
----
-
-## 二、 四阶段决策协议 (Design Protocol)
-
-处理任何前端 UI 或组件生成任务时，必须严格按顺序执行以下四个阶段[cite: 3]。跳过任意阶段均视为任务失败[cite: 3]。
-
-### Phase 1 ── 采样定位 (Context Sampling)
-在编写任何代码前，必须率先明确并输出以下两个维度的核心简报[cite: 3]：
-1. **产品类型定义**：明确该项目的真实定位。属于 SaaS / 专业工具平台 / 复杂仪表盘 / 技术文档站 / 个人主页 / 电商 / 内容资讯站 / 还是企业后台管理系统[cite: 3]？
-2. **用户注意力模式**：用户的浏览状态是快速扫读（Scannable）、深度阅读（Deep Reading）、操作效率优先（Efficiency First）、还是随机浏览发现（Discovery）[cite: 3]？
-
-### Phase 2 ── 架构辩论 (Architectural Debate)
-针对以下 7 个核心决策，必须写出 **【选择 + 核心论据 + 潜在反方论点 + 你的回应】**，以此逼迫设计走向深度思考[cite: 3]：
-1. **布局骨架与信息密度**：根据受众选择稀疏、均衡还是极致密集，严禁直接套用万能的均衡间距[cite: 3]。
-2. **主色调与色彩体系**：定义核心色彩和传达意图，必须明确说明为什么不使用泛滥的蓝紫渐变[cite: 3]。
-3. **字体搭配排版**：明确定义标题字体与正文字体的对比搭配，禁止不加思考地单用一套字体走天下[cite: 3]。
-4. **视觉质感与纯度**：在扁平（Flat）、微弱阴影（Subtle Shadow）、细线分隔（Border Divider）、玻璃质感（Glassmorphism）或粗糙质感（Brutalist）中选择一种，并确保全局视觉语言的纯粹与统一[cite: 3]。
-5. **动效预算与节制**：根据交互性质定义动效级别。无 / 极低（仅 Hover 反馈） / 适中（滚动与状态触发） / 丰富（Hero 区域叙事编排）[cite: 3]。
-6. **亮色与暗色模式预设**：基于目标用户的实际使用场景（如夜间编程工具或白天办公表格）决定默认皮肤，而非盲目默认为亮色[cite: 3]。
-7. **信息阶梯分层**：严格约束单页面视觉权重最多不超过 3 层，并明确定义哪 3 层[cite: 3]。
-
-### Phase 3 ── 设计归档 (Rationale Archive)
-输出 `DESIGN-RATIONALE.md`，将上述 7 个决策的辩论记录沉淀为底层设计资产[cite: 3]。严禁在后续组件中出现任何未经定义的随机硬编码颜色、字体大小或间距数值。
-
-### Phase 4 ── 代码构建 (Production)
-完成前三个阶段的阻塞推演后，正式进入代码编写阶段[cite: 3]。
+1. chrome（底 / 面板 / 文字 / 线）只走墨色阶，彩色只属于内容（图片、图表、预览素材）。
+2. 层级用 wash 或明度差表达；边框、阴影、渐变三者只选一种，不叠加。
+3. 一屏一个主行动；其余动作降级为次按钮、图标或 hover 出现。
 
 ---
 
-## 三、 通用「AI味」反模式黑名单 (10 Anti-Patterns)
+## 1 落地
 
-若输出的代码或样式结构中命中以下任意一项，直接判定为设计失败[cite: 3]：
+### 1.1 先看有没有既有设计系统
 
-| # | 反模式 (Anti-Pattern) | 致命原因 (Why it fails) | 正确的做法 (The Right Way) |
-| :--- | :--- | :--- | :--- |
-| 1 | 蓝紫渐变 (`from-indigo to-purple`)[cite: 3] | 毫无辨识度的“大厂外包模板风”，视觉疲劳度极高[cite: 3]。 | 基于品牌真实调性使用单色或高阶复色[cite: 3]。 |
-| 2 | 居中大标题 + 副标题 + 左右对称双按钮[cite: 3] | 全网最泛滥的万能首页布局，没有任何业务针对性[cite: 3]。 | 根据内容流向采用非对称、错落或左对齐的效率型排版。 |
-| 3 | 三列等大毛玻璃卡片 + 装饰性 Emoji 图标[cite: 3] | 形式主义的重复堆砌，对用户而言没有任何实质性信息价值[cite: 3]。 | 用真实的数据结构、图表或有信息密度的文字进行排卡[cite: 3]。 |
-| 4 | 缺乏字重和体系对比的单字体全家桶[cite: 3] | 界面毫无节奏感，文字信息在视觉上糊成一片[cite: 3]。 | 构建清晰的字号（Font Size）与字重（Font Weight）阶梯。 |
-| 5 | 全局无差别统一使用 `rounded-2xl` 等大圆角[cite: 3] | 破坏了外层容器与内部微型控件之间的嵌套数学逻辑。 | 外层容器圆角大，内层控件圆角按比例递减，严禁一刀切[cite: 3]。 |
-| 6 | 任何 Section 渲染都强行叠加 `fade-in-up`[cite: 3] | 不传达任何状态反馈的纯装饰性动画属于干扰视线的噪音[cite: 3]。 | 严格遵循动效预算决策树，非必要动效一律做删除处理[cite: 3]。 |
-| 7 | 无视场景默认套用通用框架的 `shadow-md` 粗阴影[cite: 3] | 导致界面显得脏、厚重，缺乏高级UI所需的通透感[cite: 3]。 | 使用多层、极低不透明度的微弱投影或完全改用 1px 细线分隔。 |
-| 8 | 交互元素缺乏 Hover / Focus / Active 状态切换[cite: 3] | 破坏了基础的人机交互反馈链路，属于不可原谅的半成品体验[cite: 3]。 | 任何可点击控件必须完整写好全状态的视觉反馈逻辑[cite: 3]。 |
-| 9 | 突兀且无上下文的 "Trusted by" 灰度 Logo 墙[cite: 3] | 无效的社会证明，白白浪费用户首屏极为珍贵的黄金视线。 | 仅在有强烈信用背书需求的 B 端页面放置，且需与业务紧密结合[cite: 3]。 |
-| 10| 充斥着 "Lorem ipsum" 或毫无诚意的占位文案[cite: 3] | 真实的文案长度、换行逻辑才是影响整体UI排版的最核心要素[cite: 3]。 | 填充完全符合业务真实业务逻辑、具备语境的拟真文案进行测试[cite: 3]。 |
+- 项目里已有 tokens / theme / 设计系统 / UI 库主题 → **遵守它**，按 §0 三条判据对齐，不另起一套。
+- 没有 → 按下面三步落地，这是默认路径。
 
----
+### 1.2 落 token
 
-## 四、 通用组件设计三原则
+把 §2 整段复制成 `styles/tokens.css`（路径按项目技术栈放，React / Vue / 静态页都适用），在入口引入一次。
 
-### 1. 优先复用与变体克制
-在编写新组件之前，必须首先扫描已有代码库[cite: 3]。如果功能高度相似，应通过传入 Props 的方式扩展已有组件，严格克制无意义的“制造新组件”冲动，保持前端体积的精简[cite: 3]。
+### 1.3 落基元
 
-### 2. 交互三态闭环
-所有按钮、输入框、卡片、链接等交互元素，必须同时提供：**默认态（Default） / 悬停态（Hover） / 聚焦态（Focus） / 激活态（Active）** 的完整视觉过渡[cite: 3]。且同类元素的交互响应逻辑在全站必须具备绝对的一致性[cite: 3]。
+把 §3 复制成 `styles/base.css`。页面只用 token 和基元类，不写裸 hex。
 
-### 3. 空状态（Empty State）是一种设计
-列表、表格、卡片组在面临无数据返回时，绝不能采取生硬的缺省隐藏[cite: 3]。空状态不是功能上的缺失，而是引导用户进行下一步行为、缓解视觉焦虑的重要交互设计部分[cite: 3]。
+三步做完再动页面，不要边写页面边补 token。
 
 ---
 
-## 五、 动效预算决策树 (Motion Budget)
+## 2 tokens.css（可直接复制）
 
-动效是否能够传递系统状态或核心信息？
-├─ 是（例如：计数器跳动、进度条、步骤流程图展开） → 允许构建[cite: 3]
-└─ 否 → 它是否用于用户操作的即时反馈？
-├─ 是（例如：Hover 变色、点击微弱涟漪、加载 Spinner 骨架屏） → 允许构建，但必须极其克制[cite: 3]
-└─ 否（例如：装饰性淡入淡出、背景视差、无意义的元素漂移） → 坚决删除[cite: 3]
+```css
+:root {
+  color-scheme: light;
 
----
+  /* 表面：页面底 → 面板 → 悬浮 → 更深 */
+  --bg: #ffffff;
+  --surface: #f7f7f6;
+  --surface-2: #f1f1f0;
+  --surface-3: #ecebe7;
 
-## 六、 终期验收检查清单 (Checklist)
+  /* 洗底：容器 / 控件底，代替边框 */
+  --wash: rgba(23, 24, 26, .06);
+  --wash-strong: rgba(23, 24, 26, .10);
+  --raise: #ffffff; /* 抬升块：叠在 wash 上的选中 / 激活块，比轨道亮一档 */
 
-代码完全写好后，AI 必须对照以下清单进行逐一自我审计：
+  /* 墨色文字阶 */
+  --ink-1: #17181a;
+  --ink-2: #3c3b37;
+  --ink-3: #5c5b56;
+  --ink-4: #6f6e68;
+  --ink-5: #85847e;
 
-- [ ] **决策存证**：前三个阶段的推理与设计方案辩论记录是否已完整归档[cite: 3]？
-- [ ] **反模式清零**：全面核对 10 条反模式黑名单，确认没有任何一条命中[cite: 3]？
-- [ ] **状态完整**：所有可点击或可输入的组件是否都写齐了 Hover/Focus/Active 三态[cite: 3]？
-- [ ] **无障碍对比度**：正文与背景的颜色对比度是否严格满足 WCAG 标准（正文不低于 4.5:1）[cite: 3]？
-- [ ] **多端自适应**：在移动端（375px）、平板端（768px）、桌面端（1024px+）三个核心断点下，信息是否完整可读、无爆音、无遮挡[cite: 3]？
-- [ ] **图标纯净化**：界面内严禁出现任何文本级 Emoji 作为功能图标，必须全部采用标准的、具备语义化标签的 SVG 矢量图标库[cite: 3]？
-- [ ] **无数据占位**：确认整页所有文字已彻底替换为真实或拟真业务文案，绝无 "Lorem ipsum" 或 "测试文字111" 的残留[cite: 3]。
-| 11 | 可点击控件在静态状态下无任何视觉暗示（纯文字、无背景、无边框，只能通过悬停发现） | 扫读时完全不知道这是可交互元素，可发现性为零。 | 紧凑型可切换控件（模式选择、标签筛选等）在默认态就应该有可见的容器形态（背景色块/圆角 pill），用品牌色的浅色版作为 hover 高亮，而非依赖灰度色阶（深色主题下灰度阶差过弱）。 |
-| 12 | 自定义图标/图表组件只暴露 `size` 和 `style`，不接受 `className` | 消费者被迫用内联 style 控制颜色和间距，硬编码从组件根扩散到每个使用点。 | 所有自定义 UI 组件必须同时接受 `style` 和 `className` 两个 prop 并转发到根 DOM 元素，让消费者可以选择用 CSS 类统一控制外观。 |
-| 13 | 用 JS 事件直接操作 DOM 的 inline style 来模拟交互反馈（如 `onMouseEnter` 改 `opacity`、`onMouseLeave` 改 `color`） | 绕过了 CSS 层叠机制、无法复用、双主题无法自动适配、逻辑散落在每个组件中。 | 所有交互反馈一律用 CSS 类的状态伪类（`:hover`、`:focus-visible`、`:active`）实现。JS 只负责状态切换，不负责样式计算。 |
-| 14 | 前后端状态变更只管后端不管前端——调了 API/setter 通知后端，但漏了 React state 更新 | 后端数据正确但前端 UI 保持旧值，用户看到的与实际不符。 | 任何驱动 UI 变化的状态变更必须「双调」：API/后端通知 + React setState，缺一不可。写完后必须验证两种路径（正向切换 + 反向退出）的前端显示都正确。 |
-| 15 | CSS 文件名与内部类名前缀完全不一致（如 `global.css` 里没有任何 `.global-*` 类，实际装了四个独立组件的样式） | 维护者无法通过文件名定位目标样式，只能全文搜索，造成「不知道改哪里就往这个文件塞一行」的恶性循环。 | 按组件或功能域拆分 CSS 文件，确保文件名与类名前缀对应（如 `welcome.css` 只含 `.welcome-*` 类）。旧文件中确认无引用的类直接删除（必须用 grep 验证，禁止凭记忆推断）。 |
+  /* 深色块与描边 */
+  --solid: #0e0f11;
+  --on-solid: #ffffff;
+  --rule: rgba(23, 24, 26, .16);
+  --rule-soft: rgba(23, 24, 26, .07);
 
----
+  /* 状态：只给图标 / 徽标 / 文字，不给状态点换色 */
+  --ok: #15803d;
+  --signal: #2231dd;
+  --ember: #b8431c;
 
-## 七、 工程化建模规范（通用原则）
+  --font-ui: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
-以下原则来自生产环境前端架构重建的实战验证，适用于任何规模的 CSS 工程治理。
+  /* 字阶：11 / 12 / 13 / 16 / 19 / 30 / 40 */
+  --fz-xs: 11px;  --fz-sm: 12px;  --fz-md: 13px;
+  --fz-lg: 16px;  --fz-xl: 19px;
+  --fz-2xl: 30px; --fz-3xl: 40px;
 
-### 1. CSS 变量迁移：「三明治」分层架构
+  /* 圆角：控件 12 / 卡片 20 / 容器 28 / 胶囊 999 */
+  --r-sm: 8px; --r-md: 12px; --r-lg: 20px; --r-xl: 28px; --r-pill: 999px;
 
-当项目已有的设计 token 体系混乱（命名不规范、亮暗覆盖分散、新旧变量并存）时，采用三明治分层法在不破坏存量代码的前提下完成迁移：
+  /* 间距：4 的倍数，分组用 32–64 */
+  --sp-1: 4px;  --sp-2: 8px;   --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px;  --sp-7: 32px; --sp-8: 48px; --sp-9: 64px;
 
-```
-上层 · 别名兼容层 — 所有旧变量重定义为 var(--新变量) 引用
-中层 · 基础常量层 — 阴影、玻璃、字体族等不会随主题变化的物理属性
-底层 · 语义映射层 — 新代码唯一允许引用（表面色阶、文字色阶、线条色阶、字阶、圆角间距动效）
-```
-
-双主题差异全部收敛到语义映射层。业务 CSS 文件禁止再写主题选择器覆盖块。旧变量的解析值零变化验证通过写脚本对比 git 变更前后完成。
-
-### 2. 紧凑可交互控件：「Chip 模式」
-
-当一个控件需要承载「可点击 + 状态切换」的语义但空间极度受限（如工具栏、状态栏、输入栏附属切换），采用 Chip 模式：
-
-- **静态可见性**：默认态就有背景色块和圆角，形成肉眼即可识别的 pill 形态。不需要 border（紧凑场景下边框增加视觉噪音，背景色阶差就足够表达容器边界）
-- **hover 反馈**：用品牌色的半透明版（如 accent 的 10-15% 透明度）作为 hover 背景，这比灰度色阶在深色主题下明显得多
-- **active + focus-visible**：按下态用比默认更深的色阶；焦点环用 box-shadow 而非 outline（不挤出布局）
-
-核心原则：可发现性不应依赖用户主动探索。静态态就必须传达「我是可以点的」。
-
-### 3. 同语义元素归一化
-
-项目中任何出现两次以上的同语义 UI 元素，必须提取为单个可复用类/组件。典型例子：
-
-- **键盘快捷键徽章（kbd）**：一个 `display:inline-block; padding:2px 6px` 的小容器。全站只定义一次 `.kbd`，所有快捷键提示（弹窗提示、帮助页、欢迎页）共用
-- **页面加载态/空状态**：`.page-loading` 和 `.page-empty` 在全站页面间统一的居中 + 图标 + 文字布局
-- **表单底部操作行**：`.form-footer`（flex-end + gap + saved badge）
-
-违反此原则的代价是同样的样式在 3-5 个文件中重复定义，后续调整一处漏掉其他所有处，形成技术债。
-
-### 4. CSS 架构治理铁律
-
-- **名实一致**：文件名 = 类名前缀。`global.css` 里没有任何 `.global-*` 类 = 必须拆解。不要用"以后再说"来自我欺骗
-- **按消费关系拆分**：一个 CSS 文件只服务一个组件或一组紧密耦合的组件。拆分时用需求方（tsx）的 import 关系反推
-- **死代码验证**：删除任何类之前，grep 所有 tsx 文件确认零引用。禁止凭"这个类看起来很旧"或"应该没人用了"的直觉判断
-- **交错分布降级**：当多个组件的样式在文件中交叠分布、无法按行区间物理切割时，宁可用行号导航注释（`/* L62-117: component X */`）标记分区，也不强行切割导致遗漏
-- **通用类归属**：被 3 个以上组件引用的样式提升到共享层（`primitives.css` 或 `layout.css`）
-
-### 5. 硬编码颜色清零 · 四步流程
-
-这是一个在任何 CSS 项目中都可复用的渐进式清零流程：
-
-**Step 1 — 安全映射表**：定义「语义 100% 明确 → token」的映射，只替换不会产生歧义的色值（品牌色→accent、语义色→success/error/warning、表面/文字标准色→surface/fg 对应色阶）
-
-**Step 2 — 批量替换**：用脚本逐文件应用映射表，每次替换后立即 build 验证
-
-**Step 3 — 残留审查**：人工分类所有未被替换的 hex——分两类：a) 内容色（语法高亮、图表色板、数据驱动颜色），合法保留；b) 遗漏（与映射表语义匹配但未命中），回 Step 1 处理
-
-**Step 4 — 补变量**：对 Step 3 中发现的 b) 类遗漏（如"Plan 模式紫色"、某个深/浅色调变体），在 token 文件中新增语义变量并同步定义亮/暗两套值，再回 Step 2 替换
-
-### 6. 组件 API 完整性
-
-任何返回原生 DOM/SVG 元素的自定义组件，必须把标准 CSS 控制通道完整暴露给消费者：
-
-```tsx
-// ✅ 正确：双通道
-function MyIcon({size, style, className}: Props) {
-  return <svg width={size} style={style} className={className} />
+  /* 动效：四层时长，两条曲线 */
+  --dur-fast: .16s;   /* 确认反馈 */
+  --dur-med: .22s;    /* 状态转场 */
+  --dur-slow: .42s;   /* 容器形变 */
+  --ease-swift: cubic-bezier(.22, 1, .36, 1);
+  --ease-soft: cubic-bezier(.33, .55, .2, 1);
 }
 
-// ❌ 错误：只暴露 style
-function MyIcon({size, style}: Props) {
-  return <svg width={size} style={style} /> // 消费者无法统一用类管理颜色
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --surface: #0f0f0f;
+  --surface-2: #181818;
+  --surface-3: #202020;
+  --wash: rgba(255, 255, 255, .09);
+  --wash-strong: rgba(255, 255, 255, .14);
+  --raise: #2a2a2a;
+  --ink-1: #ffffff;
+  --ink-2: #b4b4b4;
+  --ink-3: #9a9a9a;
+  --ink-4: #828282;
+  --ink-5: #6b6b6b;
+  --solid: #000000;
+  --on-solid: #ffffff;
+  --rule: rgba(255, 255, 255, .14);
+  --rule-soft: rgba(255, 255, 255, .07);
+  --ok: #34d17a;
 }
 ```
 
-缺少 `className` 的代价是每个使用点被迫写内联 style，一个组件带来的硬编码以使用点数倍扩散。
+主题切换：给 `<html>` 加/去 `data-theme="dark"`。若页面只有一个主题，删掉不需要的那半。
 
+---
 
-## 八、 工程自检清单（追加）
+## 3 基元（可直接复制）
 
-在第六章终期验收清单基础上追加以下工程层面的自检项：
+```css
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink-1);
+  font: 400 var(--fz-md)/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
 
-- [ ] **变量迁移零回归**：旧设计变量重构后，解析值是否通过脚本逐项对比验证？
-- [ ] **Chip 可发现性**：所有紧凑可点击控件在默认态（非 hover）是否已经有可见的容器形态？
-- [ ] **组件双通道**：自定义图标/图表组件是否同时接受 `style` 和 `className`？
-- [ ] **JS 操作 style 清零**：是否还有通过 `onMouseEnter` / `onMouseLeave` 直接修改 DOM style 的代码？
-- [ ] **前后端状态同步**：任何 UI 状态变更是否同时更新了前端 state 和后端/API？
-- [ ] **CSS 名实一致**：每个 CSS 文件内的类名前缀是否与文件名对应？
-- [ ] **同语义归一**：出现两次以上的同语义 UI 元素是否已提取为单个类/组件？
-- [ ] **死代码验证**：删除的 CSS 类是否通过 grep 全量 tsx 文件确认了零引用？
+/* 按钮：一屏只允许一个实心 */
+.btn {
+  height: 36px; padding: 0 16px;
+  border: 0; border-radius: var(--r-pill);
+  font: 500 var(--fz-md)/1 var(--font-ui);
+  cursor: pointer;
+  transition: opacity var(--dur-fast), scale var(--dur-fast) var(--ease-swift);
+}
+.btn:active { scale: .96; }
+.btn-primary { background: var(--ink-1); color: var(--bg); }
+.btn-primary:hover { opacity: .88; }
+.btn-secondary {
+  background: transparent; color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.btn-secondary:hover { color: var(--ink-1); }
+
+/* 卡片：只有 wash 和圆角 */
+.card {
+  padding: var(--sp-5);
+  border-radius: var(--r-lg);
+  background: var(--wash);
+}
+.card-title { font: 500 var(--fz-lg)/1.2 var(--font-ui); margin: 0 0 6px; }
+.card-desc  { font-size: var(--fz-md); color: var(--ink-4); margin: 0; }
+
+/* 分段控件 */
+.seg {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border-radius: var(--r-pill); background: var(--wash);
+}
+.seg > button {
+  height: 30px; padding: 0 14px; border: 0; border-radius: var(--r-pill);
+  background: transparent; color: var(--ink-3);
+  font: 500 var(--fz-sm)/1 var(--font-ui); cursor: pointer;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.seg > button[aria-pressed="true"] { background: var(--raise); color: var(--ink-1); }
+
+/* 输入 */
+.input {
+  width: 100%; height: 40px; padding: 0 14px;
+  border: 0; border-radius: var(--r-md);
+  background: var(--wash); color: var(--ink-1);
+  font: 400 var(--fz-md)/1 var(--font-ui);
+}
+.input::placeholder { color: var(--ink-5); }
+.input:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+
+/* 徽章与状态点：点只有两色 */
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 9px;
+  border-radius: var(--r-pill); background: var(--wash);
+  font: 500 var(--fz-xs)/1 var(--font-ui); color: var(--ink-3);
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-4); }
+.dot[data-live] { background: var(--signal); }
+
+/* 浮层 */
+.scrim { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(12px) saturate(130%); }
+.panel {
+  border-radius: var(--r-xl); background: var(--bg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .10);
+}
+```
+
+---
+
+## 4 布局与节奏
+
+- 内容最大宽 1180px 居中；桌面页面边距 20px，移动 14px。
+- 列间距 = 卡片纵向间距 = 12px。
+- 列数：1440 → 3，1024 / 768 → 2，<760 → 1。
+- 分组间距 32–64px。留白成体系，不是剩余空间。
+- 首屏必须同时出现：产品类型、主对象、唯一主行动。
+- 主界面优先 tile / 大卡 / 图标行 / 分段；超过 6 行且需横向比较才用表格。
+- 触控目标 ≥44px；移动端输入框字号 ≥16px（防 iOS 缩放）。
+
+---
+
+## 5 动效
+
+| 层 | 时长 | 用途 |
+|---|---|---|
+| 手指直控 | 0（无 transition） | 拖拽 / 滑动 / 进度，走 CSS 变量实时映射 |
+| 确认反馈 | 160ms | 按钮、hover、颜色 |
+| 状态转场 | 220ms | 淡入、折叠、图标形变 |
+| 容器形变 | 420ms | 宽度 / 高度 / 抽屉 |
+| 退场 | ≤ 进场的 85% | 关闭、消失 |
+
+四条硬约束：
+
+1. **手指直接驱动的量不许有 transition**，否则手感发飘。
+2. **弹性做成参数喂给贝塞尔**：`--ov: 1 + bounce * 0.7` → `cubic-bezier(.3, var(--ov), .4, 1)`，不要为每个幅度复制 keyframes。
+3. **入场 keyframes 只写 `from`**，终点交给元素默认值；省一半代码且不会结束时跳一下。
+4. **进度用一个 CSS 变量 + `calc()` 驱动多元素**（`opacity: calc(...)`），不要逐帧改样式或触发重渲染。
+
+界面动效不超过 600ms；不做弹跳、旋转、装饰性入场；流式日志与实时列表不加逐条动画；必须支持 `prefers-reduced-motion`。
+
+---
+
+## 6 文案
+
+- 写标签和动作，不写段落。标题 + 一行说明 + 状态 + 动作。
+- 按钮写动词，一个按钮只做一件事。
+- 状态 = 文字或图标，不只靠颜色。
+- 只陈述事实：「已保存」而不是「太棒了，已保存！」。
+- 数字、单位、日期格式统一。
+- 不拟人、不煽情、不用感叹号、不堆形容词。
+
+---
+
+## 7 禁止
+
+1. 品牌色 / 渐变出现在界面 chrome 上。
+2. 一屏两个实心主按钮。
+3. 主界面堆段落、设计说明、方案解释。
+4. 卡片套卡片；用容器包没有分组意义的元素。
+5. 同时使用边框 + 阴影 + 渐变分层。
+6. 静态卡片加投影。
+7. 只用颜色表达状态。
+8. 页面 CSS 写裸 hex、新字号、新圆角、新缓动（token 之外的即兴值）。
+9. 装饰性入场动画、流式内容逐条动画、hover 位移或弹跳。
+10. 表达失度：emoji、感叹号、形容词堆叠、拟人化营销腔、「高级感 / 极致体验」类空话。
+11. 状态圆点用多色区分；同一屏出现两种以上颜色的状态点。状态靠形状 / 文字 / 图标表达。
+12. 图标用 emoji、Unicode 符号（对勾 / 星 / 箭头类）、CSS 伪元素或位图；一律标准 SVG。
+
+---
+
+## 8 验收
+
+- [ ] 首屏只有一个主行动。
+- [ ] 主界面说明 ≤2 行，长内容进抽屉 / tooltip / 二级页。
+- [ ] 大容器 28、卡片 20、控件 12，内层递减，没有统一小圆角。
+- [ ] chrome 全部走 token，没有未登记颜色。
+- [ ] 层级靠 wash / 明度差，没有边框 + 阴影 + 渐变三件套。
+- [ ] 状态有文字或图标；同一屏状态点不超过一种颜色。
+- [ ] 没有 emoji，图标全部是标准 SVG。
+- [ ] 文案只陈述事实，没有感叹号与营销形容词。
+- [ ] 390 / 768 / 1440 三档都看过，light / dark 都在，空 / 载 / 错都在。
+- [ ] 键盘可达、焦点环可见、正文对比度 ≥4.5:1。

@@ -1,0 +1,75 @@
+:root {
+  color-scheme: light;
+
+  /* 表面：页面底 → 面板 → 悬浮 → 更深 */
+  --bg: #ffffff;
+  --surface: #f7f7f6;
+  --surface-2: #f1f1f0;
+  --surface-3: #ecebe7;
+
+  /* 洗底：容器 / 控件底，代替边框 */
+  --wash: rgba(23, 24, 26, .06);
+  --wash-strong: rgba(23, 24, 26, .10);
+  --raise: #ffffff; /* 抬升块：叠在 wash 上的选中 / 激活块，比轨道亮一档 */
+
+  /* 墨色文字阶 */
+  --ink-1: #17181a;
+  --ink-2: #3c3b37;
+  --ink-3: #5c5b56;
+  --ink-4: #6f6e68;
+  --ink-5: #85847e;
+
+  /* 深色块与描边 */
+  --solid: #0e0f11;
+  --on-solid: #ffffff;
+  --rule: rgba(23, 24, 26, .16);
+  --rule-soft: rgba(23, 24, 26, .07);
+
+  /* 状态：只给图标 / 徽标 / 文字，不给状态点换色 */
+  --ok: #15803d;
+  --signal: #2231dd;
+  --ember: #b8431c;
+
+  --font-ui: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* 字阶：11 / 12 / 13 / 16 / 19 / 30 / 40 */
+  --fz-xs: 11px;  --fz-sm: 12px;  --fz-md: 13px;
+  --fz-lg: 16px;  --fz-xl: 19px;
+  --fz-2xl: 30px; --fz-3xl: 40px;
+
+  /* 圆角：控件 12 / 卡片 20 / 容器 28 / 胶囊 999 */
+  --r-sm: 8px; --r-md: 12px; --r-lg: 20px; --r-xl: 28px; --r-pill: 999px;
+
+  /* 间距：4 的倍数，分组用 32–64 */
+  --sp-1: 4px;  --sp-2: 8px;   --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px;  --sp-7: 32px; --sp-8: 48px; --sp-9: 64px;
+
+  /* 动效：四层时长，两条曲线 */
+  --dur-fast: .16s;   /* 确认反馈 */
+  --dur-med: .22s;    /* 状态转场 */
+  --dur-slow: .42s;   /* 容器形变 */
+  --ease-swift: cubic-bezier(.22, 1, .36, 1);
+  --ease-soft: cubic-bezier(.33, .55, .2, 1);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --surface: #0f0f0f;
+  --surface-2: #181818;
+  --surface-3: #202020;
+  --wash: rgba(255, 255, 255, .09);
+  --wash-strong: rgba(255, 255, 255, .14);
+  --raise: #2a2a2a;
+  --ink-1: #ffffff;
+  --ink-2: #b4b4b4;
+  --ink-3: #9a9a9a;
+  --ink-4: #828282;
+  --ink-5: #6b6b6b;
+  --solid: #000000;
+  --on-solid: #ffffff;
+  --rule: rgba(255, 255, 255, .14);
+  --rule-soft: rgba(255, 255, 255, .07);
+  --ok: #34d17a;
+}
