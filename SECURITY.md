@@ -131,12 +131,13 @@ a compromised phone session.
 
 ### Relay server
 
-A user-deployed relay is a routing component, not storage. Per
-[`relay-usage-policy.md`](relay-usage-policy.md), it validates device/caller
-identity and forwards traffic; it does not persist, cache, or inspect session
-content. The relay tunnel carries its own `X-Relay-Token` and multi-tenant
-`X-Tunnel-Device` attribution alongside the mobile token. Anything that would
-change the "no on-disk storage" property is in scope as a vulnerability.
+A user-deployed relay is a routing component, not storage: it validates
+device/caller identity and forwards traffic; it does not persist, cache, or
+inspect session content. Protocol and deployment notes live in
+[`relay-server/README.md`](relay-server/README.md). The relay tunnel carries
+its own `X-Relay-Token` and multi-tenant `X-Tunnel-Device` attribution alongside
+the mobile token. Anything that would change the "no on-disk storage" property
+is in scope as a vulnerability.
 
 ### Secret storage
 

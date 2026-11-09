@@ -2001,7 +2001,6 @@ const en: Record<string, string> = {
   'mobile.topoDeskLabel': 'Desktop',
   'mobile.topoMidLabelLan': 'LAN',
   'mobile.topoMidLabelP2P': 'P2P',
-  'mobile.topoMidLabelRelay': 'Relay',
   'mobile.topoMidLabelServer': 'Server',
   'mobile.topoMidLabelRetrying': 'Retrying',
   'mobile.topoMidLabelFault': 'Fault',
@@ -2018,10 +2017,6 @@ const en: Record<string, string> = {
   'mobile.routeP2PDesc':
     'Direct connection across networks ...self-host with a mature mesh solution (Tailscale)',
   'mobile.routeP2PBadge': 'Planned',
-  'mobile.routeRelayTitle': 'Official relay (fallback)',
-  'mobile.routeRelayDesc':
-    'Used automatically when direct paths fail ...reach this computer from anywhere',
-  'mobile.routeRelayBadge': 'Fallback',
   'mobile.routeVpsTitle': 'Custom server',
   'mobile.routeVpsDesc':
     'Optional: connect to a relay-server you deploy for remote access; leave it off to use only Wi-Fi LAN',
@@ -2030,7 +2025,6 @@ const en: Record<string, string> = {
   'mobile.routeStateOff': 'Off',
   'mobile.routeStatePlanned': 'Planned',
   'mobile.nodeModeTitle': 'Server connection',
-  'mobile.nodeOfficial': 'Official route (temporarily unavailable)',
   'mobile.nodeCustom': 'Custom server',
   'mobile.nodeCustomHint': 'Deployed and maintained by you',
   'mobile.nodeUrlLabel': 'Server address (ws:// or wss://)',
@@ -2045,10 +2039,6 @@ const en: Record<string, string> = {
   'mobile.nodeDisable': 'Disconnect custom server',
   'mobile.customServerQrHint':
     'This QR code reaches the desktop through your configured server; Wi-Fi LAN users do not need it',
-  'mobile.nodeResetOfficial': 'Restore official relay node',
-  'mobile.nodeResetOfficialConfirm':
-    'Restore official relay? Current self-hosted VPS config will be overwritten (url/public entry/token reset to official defaults).',
-  'mobile.nodeResetOfficialDone': 'Official relay node restored',
   'mobile.routeAuto': 'Auto',
   'mobile.routeOptional': 'Optional',
   'mobile.routeCollapse': 'Collapse',
@@ -2064,7 +2054,6 @@ const en: Record<string, string> = {
   'mobile.listPassword': 'Pairing password',
   'mobile.listLan': 'LAN direct',
   'mobile.listP2P': 'P2P direct',
-  'mobile.listRelay': 'Official relay (temporarily unavailable)',
   'mobile.listVps': 'Custom server',
   'mobile.relayServerAddr': 'Server address',
   'mobile.deviceIdLabel': 'Device ID',
