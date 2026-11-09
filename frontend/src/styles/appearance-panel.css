@@ -179,7 +179,6 @@
 }
 /* 激活：accent 描边 + 外环（与预设大卡 active 同支语义键，不引新色） */
 .apnp-theme-card.active {
-  border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-dim);
 }
 
@@ -387,7 +386,6 @@
 
 /* 激活：accent 描边 + 右上勾选标（与紧凑卡 active 同支语义键，不引新色） */
 .apnp-preset-card.active {
-  border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-dim);
 }
 

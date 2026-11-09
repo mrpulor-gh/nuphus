@@ -146,7 +146,6 @@
 .page-tab.active {
   color: var(--fg-1);
   background: var(--surface-2);
-  border-color: var(--line-2);
   font-weight: var(--fw-medium);
 }
 

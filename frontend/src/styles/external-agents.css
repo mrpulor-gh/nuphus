@@ -261,7 +261,6 @@
 }
 .ext-agents-chip.active {
   background: var(--accent-dim);
-  border-color: var(--accent);
   color: var(--fg-1);
 }
 .ext-agents-chip-main {
@@ -431,7 +430,6 @@
 }
 .ext-agents-icon-act.active {
   background: var(--accent-dim);
-  border-color: var(--accent);
   color: var(--accent);
 }
 

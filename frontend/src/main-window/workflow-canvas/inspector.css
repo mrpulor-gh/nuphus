@@ -38,9 +38,6 @@
   border-radius: var(--radius-1);
   background: var(--surface-inset);
 }
-.wfp-seg__item.is-active .wfc-ratio-shape {
-  border-color: var(--accent);
-}
 .wfc-combo-menu.wfc-combo-menu--portal {
   position: fixed;
   z-index: 10020;

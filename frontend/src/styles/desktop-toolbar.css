@@ -141,7 +141,6 @@
 }
 .desktop-toolbar-btn.active {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
 /* ── 工具按钮 hover 浮层 ──

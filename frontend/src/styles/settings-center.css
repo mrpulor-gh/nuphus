@@ -179,7 +179,6 @@
   box-shadow: var(--shadow-focus);
 }
 .settings-center-nav-item.active {
-  border-color: rgba(var(--accent-rgb), 0.34);
   background: var(--accent-dim);
   color: var(--fg-1);
 }

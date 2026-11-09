@@ -539,7 +539,6 @@
 /* 编辑态激活视觉：accent 底 + accent 描边（与列表面板同色系） */
 .pv-edit-toggle.is-active {
   background: var(--accent-dim);
-  border-color: var(--accent);
   color: var(--accent);
 }
 /* 待处理角标：收起态仍能看到「这批标注还没发」（P4 信息不丢） */

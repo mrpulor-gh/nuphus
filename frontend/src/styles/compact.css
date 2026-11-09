@@ -196,7 +196,6 @@
   background: var(--void-hover);
 }
 .compact-option-btn.active {
-  border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
   box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.3);

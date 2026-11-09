@@ -20,9 +20,6 @@
 .skill-card.inactive {
   opacity: 0.55;
 }
-.skill-card.active {
-  border-color: rgba(var(--accent-rgb), 0.08);
-}
 
 .skill-card-dot {
   width: 5px;

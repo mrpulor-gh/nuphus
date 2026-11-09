@@ -152,7 +152,6 @@
 .input-send-btn.active {
   background: var(--accent);
   color: var(--on-accent);
-  border-color: var(--accent);
 }
 .input-send-btn.active:hover {
   background: var(--accent-hover);

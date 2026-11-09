@@ -1658,9 +1658,6 @@ textarea.wfc-input {
 .wfc-bottom-main-tab.is-active {
   color: var(--fg-1);
 }
-.wfc-bottom-main-tab.is-active {
-  border-bottom-color: var(--accent);
-}
 .wfc-log-running {
   color: var(--accent-hover);
   font-size: var(--fz-xs);

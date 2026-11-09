@@ -31,7 +31,6 @@
   box-shadow: var(--shadow-focus);
 }
 .tag-filter-btn.active {
-  border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
 }

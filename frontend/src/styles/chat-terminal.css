@@ -607,7 +607,6 @@
   /* accent 系派生：原写死 rgba(59,130,246,.25/.08) 是裸 Tailwind 蓝——简白下
      accent=墨黑，蓝边蓝底与墨黑文字完全不属一套（大王 2026-10-07 报）。
      color-mix 保持与原设计相同的 25%/8% 比例，三主题各自解析。 */
-  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 

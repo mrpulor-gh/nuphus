@@ -440,7 +440,6 @@
   border-color: var(--border-standard);
 }
 .input-modal-chip.active {
-  border-color: var(--accent);
   background: var(--accent-dim);
   color: var(--accent);
 }
@@ -576,7 +575,6 @@
 }
 .rating-star.active {
   background: rgba(var(--warning-rgb), 0.1);
-  border-color: rgba(var(--warning-rgb), 0.3);
   color: var(--warning);
 }
 /* RatingModal (ExecutionTraceFloating) — class names matching component */
@@ -904,7 +902,6 @@
   background: var(--glass-2);
 }
 .cmd-modal-card.active {
-  border-color: var(--accent);
   background: rgba(var(--accent-rgb), 0.06);
 }
 .cmd-modal-card.switching {
@@ -1019,10 +1016,12 @@
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out);
 }
-.model-provider-option:hover,
-.model-provider-option.active {
+.model-provider-option:hover {
   background: var(--surface-hover);
   border-color: var(--line-2);
+}
+.model-provider-option.active {
+  background: var(--surface-hover);
 }
 .model-provider-option-body {
   display: flex;
@@ -1094,10 +1093,13 @@
     border-color var(--dur-fast) var(--ease-out);
 }
 .model-provider-model:hover,
-.model-provider-model:focus-visible,
-.model-provider-model.active {
+.model-provider-model:focus-visible {
   background: var(--surface-hover);
   border-color: var(--line-2);
+  color: var(--fg-1);
+}
+.model-provider-model.active {
+  background: var(--surface-hover);
   color: var(--fg-1);
 }
 .model-provider-model:focus-visible {

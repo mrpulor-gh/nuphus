@@ -3140,7 +3140,6 @@ body {
   /* 当前 mode：反色背景（黑胶囊白字 / 白胶囊黑字） */
   background: var(--m-plus-bg);
   color: var(--m-plus-fg);
-  border-color: transparent;
 }
 
 .mobile-mode-capsule-name {
@@ -3237,7 +3236,6 @@ body {
    文字整体取胶囊前景保证 meta 可读；标题再用主题色 --m-accent
    （亮=白 / 深=黑，与反色底天然强对比） */
 .mobile-sess-item.is-active {
-  border-color: var(--m-accent, #f0b429);
   background: var(--m-wf-pill-bg);
   color: var(--m-wf-pill-fg);
 }
@@ -3532,7 +3530,6 @@ body {
 }
 
 .mobile-mode-info-opt.is-active {
-  border-color: var(--m-plus-fg);
   background: color-mix(in srgb, var(--m-plus-fg) 10%, transparent);
 }
 
@@ -4793,7 +4790,6 @@ body {
 }
 
 .mobile-newchat-mode.is-active {
-  border-color: var(--m-accent);
   background: color-mix(in srgb, var(--m-accent) 10%, transparent);
 }
 

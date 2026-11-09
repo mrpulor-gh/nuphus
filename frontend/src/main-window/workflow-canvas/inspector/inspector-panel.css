@@ -331,11 +331,7 @@
 }
 .wfp-seg__item.is-active {
   background: var(--accent-dim);
-  border-color: rgba(var(--accent-rgb), 0.45);
   color: var(--accent);
-}
-.wfp-seg__item.is-active:hover {
-  border-color: var(--accent);
 }
 .wfp-seg__item:focus-visible {
   outline: none;

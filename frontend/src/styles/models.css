@@ -248,7 +248,6 @@
   border-color: rgba(var(--accent-rgb), 0.3);
 }
 .model-card.is-active {
-  border-color: rgba(var(--accent-rgb), 0.45);
   background: rgba(var(--accent-rgb), 0.06);
 }
 
@@ -421,7 +420,6 @@ button.cap-chip:disabled {
      主题基色做字——暗色主题下「亮底 + 近黑字」，亮色主题下「深底 + 白字」。
      注意不能用 --accent 做字：亮色主题的 accent 本身接近黑（#111），
      叠在近黑的反色底上直接看不见。 */
-  border-color: transparent;
   background: var(--fg-1);
   color: var(--surface-0);
 }
@@ -729,7 +727,6 @@ button.cap-chip:disabled {
   box-shadow: var(--shadow-focus);
 }
 .models-rail-item.active {
-  border-color: rgba(var(--accent-rgb), 0.34);
   background: var(--accent-dim);
   color: var(--fg-1);
 }
@@ -1149,7 +1146,6 @@ button.cap-chip:disabled {
 }
 .models-preset-btn.active {
   background: var(--accent-dim);
-  border-color: rgba(var(--accent-rgb), 0.4);
   color: var(--accent-hover);
 }
 
@@ -1241,7 +1237,6 @@ button.cap-chip:disabled {
   color: var(--fg-1);
 }
 .models-toolbar-btn.is-active {
-  border-color: rgba(var(--accent-rgb), 0.34);
   background: var(--accent-dim);
   color: var(--fg-1);
 }
@@ -1362,7 +1357,6 @@ button.cap-chip:disabled {
 }
 /* 选中态：筛选框内容恰等于该 chip 的片段串（点击 chip 后即点亮） */
 .models-hot-chip.is-active {
-  border-color: var(--accent);
   color: var(--fg-1);
 }
 

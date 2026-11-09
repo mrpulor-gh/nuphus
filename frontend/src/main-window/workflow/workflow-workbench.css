@@ -56,7 +56,6 @@
 }
 .workflow-workbench-types button.is-active {
   color: var(--accent);
-  border-color: var(--line-2);
   background: var(--accent-dim);
 }
 .workflow-workbench-close {
