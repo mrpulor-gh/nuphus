@@ -13,6 +13,30 @@
   color: var(--spark-primary);
   letter-spacing: -0.02em;
 }
+/* 标题字号阶梯：按序各降一级（@14px 正文 = 21 / 18 / 16 / 14 / 12 / 11）。
+   原实现未声明字号 → 落浏览器默认（h1 2em=28 / h2 1.5em=21 / h3 1.17em≈16.4），
+   一级标题压过正文太多、层级跳跃过大。这里显式定阶梯并整体降一级：
+   h1 取原 h2 的 21px，h2 → 18px，h3 → 16px，h4 与正文同号 14px，
+   h5/h6 收在辅助档 12/11px。单位用 em（不是 px）以跟随
+   --chat-font-size（通用设置·会话字号）与各容器基准同步缩放。 */
+.markdown-h1 {
+  font-size: 1.5em; /* 21px @14 */
+}
+.markdown-h2 {
+  font-size: 1.286em; /* 18px @14 */
+}
+.markdown-h3 {
+  font-size: 1.143em; /* 16px @14 */
+}
+.markdown-h4 {
+  font-size: 1em; /* 14px @14 */
+}
+.markdown-h5 {
+  font-size: 0.857em; /* 12px @14 */
+}
+.markdown-h6 {
+  font-size: 0.786em; /* 11px @14 */
+}
 
 /* ── 段落 ── */
 .markdown-paragraph {
