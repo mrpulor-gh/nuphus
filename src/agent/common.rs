@@ -382,6 +382,22 @@ pub fn extract_tool_calls(blocks: &[ContentBlock]) -> Vec<ToolCall> {
         .collect()
 }
 
+/// 匹配三位 HTTP 状态码，要求两侧不是字母/数字。
+///
+/// 直接 `contains("422")` 会把 request id / 时间戳里的数字串误当成状态码
+/// （真实事故：`request id: 202611081314208774042238268…` 命中 "422"，
+/// 导致一个 500 错误被判为不可重试并提示「请求参数有误」）。
+/// 只认独立出现的形态：`API error 422:`、`status_code=422`、`HTTP 422`
+/// 命中；`…042238…`、`abc429xyz` 不命中。
+pub(crate) fn contains_status_code(err: &str, code: &str) -> bool {
+    err.match_indices(code).any(|(idx, _)| {
+        let before = err[..idx].chars().next_back();
+        let after = err[idx + code.len()..].chars().next();
+        before.map_or(true, |c| !c.is_ascii_alphanumeric())
+            && after.map_or(true, |c| !c.is_ascii_alphanumeric())
+    })
+}
+
 /// Determine if LLM API error is retryable.
 ///
 /// Non-retryable (immediate failure):
@@ -403,11 +419,17 @@ pub fn is_retryable_llm_error(err: &str) -> bool {
     }
 
     // --- Non-retryable: model/auth/balance/param errors ---
+    // 状态码单独用边界匹配：request id 里的数字串（如 …042238…）不得当成 422。
+    let non_retryable_codes = ["400", "401", "402", "403", "404", "422"];
+    if non_retryable_codes
+        .iter()
+        .any(|c| contains_status_code(&e, c))
+    {
+        return false;
+    }
     let non_retryable = [
-        "400",
         "bad request",
         "invalid request",
-        "401",
         "unauthorized",
         "auth",
         "invalid api key",
@@ -416,17 +438,13 @@ pub fn is_retryable_llm_error(err: &str) -> bool {
         "api key",
         "apikey",
         "api_key",
-        "402",
         "payment",
         "balance",
         "insufficient",
         "quota",
         "credit",
-        "403",
         "forbidden",
-        "404",
         "not found",
-        "422",
         "unprocessable",
         "invalid model",
         "model not found",
@@ -445,12 +463,15 @@ pub fn is_retryable_llm_error(err: &str) -> bool {
     }
 
     // --- Retryable: server/network/rate-limit ---
+    // 5xx 状态码同样走边界匹配：错误体里的 request id / 时间戳不得命中。
+    let retryable_codes = ["500", "502", "503", "504", "529"];
+    if retryable_codes
+        .iter()
+        .any(|c| contains_status_code(&e, c))
+    {
+        return true;
+    }
     let retryable = [
-        "500",
-        "502",
-        "503",
-        "504",
-        "529",
         "service unavailable",
         "bad gateway",
         "gateway timeout",
@@ -644,8 +665,10 @@ pub fn classify_llm_error(err: &str) -> LlmErrorKind {
     }
 
     // --- 余额 / 配额 ---
+    if contains_status_code(&e, "402") {
+        return LlmErrorKind::Balance;
+    }
     let balance = [
-        "402",
         "payment",
         "payment required",
         "balance",
@@ -666,8 +689,13 @@ pub fn classify_llm_error(err: &str) -> LlmErrorKind {
     }
 
     // --- 鉴权 ---
+    if ["401", "403"]
+        .iter()
+        .any(|c| contains_status_code(&e, c))
+    {
+        return LlmErrorKind::Auth;
+    }
     let auth = [
-        "401",
         "unauthorized",
         "invalid api key",
         "invalid_api_key",
@@ -675,7 +703,6 @@ pub fn classify_llm_error(err: &str) -> LlmErrorKind {
         "api key",
         "apikey",
         "api_key",
-        "403",
         "forbidden",
         "permission denied",
     ];
@@ -685,14 +712,18 @@ pub fn classify_llm_error(err: &str) -> LlmErrorKind {
         }
     }
 
-    // --- 参数 / 通用 400 --- 放在最后：上面四类都没命中时，400 系列才归到这里。
+    // --- 参数 / 通用 400 --- 放在最后：上面几类都没命中时，400/422 才归到这里。
     // 这也保证「400 + 内容审核」的响应先被 ContentPolicy 接走（见上方排序说明）。
+    if ["400", "422"]
+        .iter()
+        .any(|c| contains_status_code(&e, c))
+    {
+        return LlmErrorKind::Param;
+    }
     let param = [
-        "400",
         "bad request",
         "invalid request",
         "unprocessable",
-        "422",
         "invalid parameter",
         "missing parameter",
         "malformed",
@@ -745,8 +776,11 @@ pub fn wants_file_output(input: &str) -> bool {
 /// - `classify_llm_error`：归 `LlmErrorKind::RateLimit` 给「稍后重试」指引。
 pub fn is_rate_limit_error(err: &str) -> bool {
     let e = err.to_lowercase();
+    // 429 边界匹配：request id 里的 …429… 不得触发限流判定。
+    if contains_status_code(&e, "429") {
+        return true;
+    }
     [
-        "429",
         "rate limit",
         "rate_limit",
         "too many requests",
@@ -782,10 +816,9 @@ pub fn is_network_error(err: &str) -> bool {
         || err.contains("no route to host")
         || err.contains("network unreachable")
         || err.contains("name or service not known")
-        || err.contains("500")
-        || err.contains("502")
-        || err.contains("503")
-        || err.contains("504")
+        || ["500", "502", "503", "504"]
+            .iter()
+            .any(|c| contains_status_code(&err, c))
         || err.contains("service unavailable")
         || err.contains("bad gateway")
         || err.contains("i/o error")
@@ -951,5 +984,44 @@ mod tests {
             classify_llm_error("API error 429: Too Many Requests"),
             LlmErrorKind::RateLimit
         ));
+    }
+
+    /// 回归：request id 里的数字串不得被当成 HTTP 状态码。
+    ///
+    /// 真实样本：new-api 网关返回 500 + sensitive_words_detected，
+    /// request id 中恰好含 "422"。旧实现用 `contains("422")` 命中，
+    /// 把 500 判成不可重试，又因无类别可归而兜底成 Param，
+    /// 最终提示「请求参数有误，请检查模型配置」——与事实完全相反。
+    #[test]
+    fn request_id_digits_are_not_status_codes() {
+        let err = "LLM error: API error 500: {\"error\":{\"message\":\"sensitive_words_detected \
+                   (request id: 202611081314208774042238268d9d6hn7hMCnO)\",\
+                   \"type\":\"new_api_error\",\"param\":\"\",\
+                   \"code\":\"sensitive_words_detected\"}}";
+        assert!(
+            is_retryable_llm_error(err),
+            "500 是 5xx，应走重试；request id 里的 422 不得改变结论"
+        );
+        assert_eq!(
+            classify_llm_error(err),
+            LlmErrorKind::Unknown,
+            "不认识的错误必须落 Unknown 并保留原始错误体，不得猜成参数问题"
+        );
+
+        // 边界匹配不能削掉真实状态码的识别能力
+        assert!(!is_retryable_llm_error("API error 422: unprocessable entity"));
+        assert_eq!(
+            classify_llm_error("API error 422: unprocessable entity"),
+            LlmErrorKind::Param
+        );
+        assert!(!is_retryable_llm_error("API error 401: unauthorized"));
+
+        // request id 中的 429 同样不得触发限流判定
+        let rate_like = "API error 500: {\"message\":\"boom (request id: abc429xyz)\"}";
+        assert!(
+            is_retryable_llm_error(rate_like),
+            "request id 里的 429 不应把 500 改判为限流不可重试"
+        );
+        assert_ne!(classify_llm_error(rate_like), LlmErrorKind::RateLimit);
     }
 }

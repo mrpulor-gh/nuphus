@@ -143,10 +143,13 @@ export type SideChatErrorKind =
 
 export function explainSideChatError(detail: string): SideChatErrorKind {
   const d = detail.toLowerCase()
-  if (/402|insufficient|balance|quota|credit|payment/.test(d)) return 'balance'
-  if (/401|unauthorized|invalid api key|invalid_api_key|incorrect api key/.test(d)) return 'auth'
-  if (/403|forbidden/.test(d)) return 'forbidden'
-  if (/429|rate limit|too many requests/.test(d)) return 'rate'
+  // 数字状态码一律加词边界：request id / 时间戳里的数字串（如 …042238…）
+  // 不是状态码，裸子串匹配会把未知错误误标成余额不足或限流。
+  if (/\b402\b|insufficient|balance|quota|credit|payment/.test(d)) return 'balance'
+  if (/\b401\b|unauthorized|invalid api key|invalid_api_key|incorrect api key/.test(d))
+    return 'auth'
+  if (/\b403\b|forbidden/.test(d)) return 'forbidden'
+  if (/\b429\b|rate limit|too many requests/.test(d)) return 'rate'
   if (/timeout|timed out/.test(d)) return 'timeout'
   if (/connect|network|dns|tls|econn|socket/.test(d)) return 'network'
   if (/context length|too long|max tokens/.test(d)) return 'context'

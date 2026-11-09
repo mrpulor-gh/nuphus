@@ -12,6 +12,7 @@
 //!   2. CDP 浏览器渲染提取 (SPA/JS-heavy)
 //!   3. Jina AI 渲染镜像
 
+use crate::agent::common::contains_status_code;
 use crate::permissions::ToolCategory;
 use crate::tools::registry::{ToolDef, ToolRegistry};
 use crate::ToolResult;
@@ -769,8 +770,10 @@ enum SourceFailure {
 /// 「All search sources failed」让模型无从判断该等还是该换词。
 fn classify_source_failure(reason: &str) -> SourceFailure {
     let lower = reason.to_ascii_lowercase();
-    if lower.contains("429")
-        || lower.contains("503")
+    // 状态码边界匹配：request id / 查询参数里的数字串不是 HTTP 状态码。
+    // 与 agent::common::contains_status_code 共用同一判定，避免两处行为漂移。
+    if contains_status_code(&lower, "429")
+        || contains_status_code(&lower, "503")
         || lower.contains("timed out")
         || lower.contains("timeout")
     {
@@ -3603,5 +3606,35 @@ mod tests {
         let out = parse_deepseek_fetch_response(&body).expect("应解析成功");
         assert_eq!(out.title, "", "缺 title 应为空串而非报错");
         assert_eq!(out.content, "正文内容");
+    }
+
+    /// 回归：源错误串里的数字串（request id 等）不得被当成 HTTP 状态码。
+    #[test]
+    fn test_classify_source_failure_requires_status_boundary() {
+        assert_eq!(
+            classify_source_failure("HTTP 429 Too Many Requests"),
+            SourceFailure::Retryable,
+            "真实 429 仍须判可重试"
+        );
+        assert_eq!(
+            classify_source_failure("HTTP 503 Service Unavailable"),
+            SourceFailure::Retryable,
+            "真实 503 仍须判可重试"
+        );
+        assert_eq!(
+            classify_source_failure("request id: abc429xyz, upstream rejected"),
+            SourceFailure::Permanent,
+            "request id 里的 429 不得触发可重试"
+        );
+        assert_eq!(
+            classify_source_failure("request id: xyz503abc, no results"),
+            SourceFailure::Permanent,
+            "request id 里的 503 不得触发可重试"
+        );
+        assert_eq!(
+            classify_source_failure("connection timed out"),
+            SourceFailure::Retryable,
+            "超时仍须判可重试"
+        );
     }
 }

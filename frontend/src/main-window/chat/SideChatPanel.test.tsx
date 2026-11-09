@@ -80,7 +80,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
 }))
 
-import { EXPLORE_PROJECT, SideChatPanel } from './SideChatPanel'
+import { EXPLORE_PROJECT, explainSideChatError, SideChatPanel } from './SideChatPanel'
 
 /** 组件经 listen 注册的 handler（每个挂载周期攒一份，afterEach 清空） */
 type SideChatHandler = (payload: unknown) => void
@@ -2390,5 +2390,21 @@ describe('SideChatPanel 接线契约（源码断言）', () => {
     // 键值对：标签列固定宽度，三条内容共用同一左边界
     expect(css).toMatch(/\.scp-empty-k\s*\{[^}]*flex:\s*0 0 3em/)
     expect(css).toMatch(/\.scp-empty-points li\s*\{[^}]*display:\s*flex/)
+  })
+})
+
+describe('explainSideChatError 状态码边界', () => {
+  it('request id 里的数字串不得被当成状态码', () => {
+    // 真实样本：request id 含 …042238…，旧实现裸 /402|429/ 会误标余额/限流。
+    const detail =
+      'LLM error: API error 500: {"error":{"message":"sensitive_words_detected ' +
+      '(request id: 202611081314208774042238268d9d6hn7hMCnO)","type":"new_api_error",' +
+      '"param":"","code":"sensitive_words_detected"}}'
+    expect(explainSideChatError(detail)).toBe('generic')
+  })
+
+  it('真实状态码仍按原分类（边界匹配不削能力）', () => {
+    expect(explainSideChatError('API error 402: payment required')).toBe('balance')
+    expect(explainSideChatError('API error 429: too many requests')).toBe('rate')
   })
 })
