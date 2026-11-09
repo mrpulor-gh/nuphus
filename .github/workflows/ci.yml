@@ -73,9 +73,11 @@ jobs:
 
   check-macos:
     name: Check (macOS arm64)
-    # macos-14 免费 runner 为 Apple Silicon (arm64)，原生 aarch64 编译验证。
+    # macos-15 免费 runner 为 Apple Silicon (arm64)，原生 aarch64 编译验证。
+    # （2026-11-09：macos-14 镜像退役——注解报 configuration not supported，换 macos-15，
+    # 与本文件 Smoke (macOS launch) 同标签。）
     # cargo check 会执行 build.rs（自动下载 sherpa universal2 + 模型），快速暴露 macOS 编译错误。
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Verify Apple Silicon runner

@@ -37,10 +37,13 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: nuphus_windows_amd64
-          # macOS: macos-14 免费 runner 为 Apple Silicon (arm64)，产物为原生 aarch64 app。
+          # macOS: macos-15 免费 runner 为 Apple Silicon (arm64)，产物为原生 aarch64 app。
+          # （2026-11-09：macos-14 镜像退役——注解报「The configuration
+          # 'macos-14-arm64-us-default' is not supported」，mac leg 开跑即取消；
+          # 换 macos-15 与 ci.yml Smoke 一致。）
           # build.rs macOS sherpa 源已切换 osx-universal2（含 x86_64+arm64 双 slice）。
           # dmg 打包在 CI 无头环境 hdiutil 失败（待攻关），当前打 .app + zip 发布。
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             artifact: nuphus_macos_arm64
     runs-on: ${{ matrix.os }}
