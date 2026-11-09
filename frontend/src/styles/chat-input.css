@@ -985,77 +985,183 @@
   opacity: 1;
   margin-left: 6px;
 }
-/* 激活三态：胶囊保持 hover 展开后的宽度（≈图标15+文字≈54+padding18），
-   点击瞬间外形不变，仅内部内容整体切换为音波 */
+/* 激活态：voice-note 胶囊（视觉移植自「按住录音/左滑取消」原型，比例适配输入行）。
+   点击 34→176px 弹性展开（bounce 曲线），内部 = 红点 + 计时 + 滚动条形；
+   录音中左滑 = 取消手势：内容行随 --pull 平移淡出、取消圆盘就位，armed 松开执行。
+   配色 token 化：胶囊底 = void-primary（与输入工具菜单同族面板色）+ line-1 描边；
+   聆听红 = error；启动/收尾 = accent 系。 */
 .chat-voice-btn.activating,
 .chat-voice-btn.listening,
-.chat-voice-btn.finishing {
-  min-width: 88px;
+.chat-voice-btn.finishing,
+.chat-voice-btn.cancel {
+  position: relative;
+  flex: none;
+  min-width: 176px;
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 22px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  color: var(--fg-1);
+  touch-action: none;
+  /* 展开回弹（原型 bounce 40 → 1 + 0.4×0.7）；可插值位 = min-width/height/border-radius */
+  --vn-ov: 1.28;
+  transition:
+    min-width 320ms cubic-bezier(0.3, var(--vn-ov), 0.4, 1),
+    height 320ms cubic-bezier(0.3, var(--vn-ov), 0.4, 1),
+    border-radius 320ms cubic-bezier(0.3, var(--vn-ov), 0.4, 1),
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 .chat-voice-btn.activating {
   background: var(--accent-dim);
   color: var(--accent);
-}
-.chat-voice-btn.listening {
-  background: rgba(var(--error-rgb), 0.12);
-  color: var(--error);
-  box-shadow: 0 0 0 3px rgba(var(--error-rgb), 0.08);
+  border-color: transparent;
 }
 .chat-voice-btn.listening:hover {
-  background: rgba(var(--error-rgb), 0.2);
-  color: var(--error);
+  background: var(--void-primary);
+  color: var(--fg-1);
 }
 .chat-voice-btn.finishing {
   background: var(--accent-dim);
   color: var(--accent);
+  border-color: transparent;
   cursor: wait;
 }
-/* 音波：9 条竖条镜像包络——中心(第5条)振幅最大，4&6 / 3&7 / 2&8 / 1&9 向外
-   递减（真实电平表视觉语言）；统一时长 + 相位由内向外依次滞后（负 delay 递增），
-   形成从中心向两侧的波传播，而非旧版 5 组随机关键帧的无序跳动。
-   状态区分：listening 全强度全速；activating 放慢 1.5× + opacity .8（从容启动）；
-   finishing opacity .65（衰减收尾）。 */
-.chat-voice-btn .voice-wave {
+/* 内容行：红点 + 计时 + 波形；随 --pull 向左平移并淡出（原型 vn-rec/vn-in 同源） */
+.chat-voice-btn .vn-rec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  white-space: nowrap;
+  opacity: calc(1 - var(--pull, 0) * 0.55);
+  transform: translateX(calc(var(--pull, 0) * -32px));
+  animation: vn-in 240ms ease 80ms both;
+}
+.chat-voice-btn .vn-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--error);
+  animation: vn-blink 1s ease-in-out infinite;
+  opacity: max(0, 1 - var(--pull, 0) * 1.6);
+}
+.chat-voice-btn .vn-time {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-caption, 12px);
+  min-width: 34px;
+  opacity: max(0.7, max(0, 1 - var(--pull, 0) * 1.6));
+}
+.chat-voice-btn .vn-wave {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  width: 72px;
-  height: 14px;
+  opacity: calc(1 - var(--pull, 0) * 0.7);
 }
-.chat-voice-btn .voice-wave i {
-  width: 2.5px;
-  height: 14px;
+/* 条形：3px 细条，静息 4px 点位，随 --l 长高；listening 逐条 grow-in（原型同源）。
+   启动期波形静默（levels 空），收尾期冻结衰减 */
+.chat-voice-btn .vn-bar {
+  width: 3px;
+  flex: none;
+  height: calc(4px + var(--l, 0) * 16px);
   border-radius: 2px;
   background: currentColor;
-  transform: scaleY(0.15);
-  animation: vwEdge 1.1s ease-in-out infinite;
+  transition: height 160ms linear;
 }
-.chat-voice-btn .voice-wave i:nth-child(5) {
-  animation-name: vwCore;
-  animation-delay: -0.48s;
+.chat-voice-btn.listening .vn-bar {
+  animation: vn-grow 200ms cubic-bezier(0.3, 1.5, 0.4, 1) both;
 }
-.chat-voice-btn .voice-wave i:nth-child(4),
-.chat-voice-btn .voice-wave i:nth-child(6) {
-  animation-name: vwInner;
-  animation-delay: -0.36s;
+.chat-voice-btn.activating .vn-bar,
+.chat-voice-btn.finishing .vn-bar {
+  opacity: 0.5;
+  transition: none;
 }
-.chat-voice-btn .voice-wave i:nth-child(3),
-.chat-voice-btn .voice-wave i:nth-child(7) {
-  animation-name: vwMid;
-  animation-delay: -0.24s;
+/* 取消圆盘：armed 落点吸附（原型 vn-cancel；盘底为固定反白，仅叠 error 红用） */
+.chat-voice-btn .vn-cancel {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 24px;
+  height: 24px;
+  margin-top: -12px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--error);
+  color: #fff;
+  opacity: 0;
+  scale: 0.4;
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    scale 160ms ease;
 }
-.chat-voice-btn .voice-wave i:nth-child(2),
-.chat-voice-btn .voice-wave i:nth-child(8) {
-  animation-name: vwOuter;
-  animation-delay: -0.12s;
+.chat-voice-btn .vn-cancel[data-on] {
+  opacity: 1;
+  scale: 1;
+  transition:
+    opacity 160ms ease,
+    scale 420ms cubic-bezier(0.24, 1.34, 0.38, 1);
 }
-.chat-voice-btn.activating .voice-wave i {
-  animation-duration: 1.6s;
-  opacity: 0.8;
+/* 手势提示：胶囊上方居中（输入行空间向上扩展），armed 转红加急 */
+.chat-voice-btn .vn-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  text-align: center;
+  font-size: var(--fs-caption, 12px);
+  white-space: nowrap;
+  color: var(--spark-muted);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 6;
+  transition: opacity 220ms ease;
 }
-.chat-voice-btn.finishing .voice-wave i {
-  animation-duration: 1.4s;
-  opacity: 0.65;
+.chat-voice-btn .vn-hint[data-on] {
+  opacity: calc(1 - var(--pull, 0));
+}
+.chat-voice-btn .vn-hint[data-armed] {
+  opacity: 1;
+  color: var(--error);
+}
+/* 取消收拢：条形折没、红点/计时淡出（原型 [data-phase="cancel"] 同源），
+   随后胶囊宽度按展开过渡曲线回落 */
+.chat-voice-btn.cancel .vn-rec {
+  animation: none;
+}
+.chat-voice-btn.cancel .vn-bar {
+  scale: 1 0;
+  opacity: 0;
+  transition:
+    scale 220ms ease,
+    opacity 220ms ease;
+}
+.chat-voice-btn.cancel .vn-dot,
+.chat-voice-btn.cancel .vn-time {
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+@keyframes vn-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes vn-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+@keyframes vn-grow {
+  from {
+    scale: 1 0.2;
+  }
 }
 @keyframes vwCore {
   0%,
@@ -1066,39 +1172,6 @@
     transform: scaleY(1);
   }
   65% {
-    transform: scaleY(0.5);
-  }
-}
-@keyframes vwInner {
-  0%,
-  100% {
-    transform: scaleY(0.25);
-  }
-  40% {
-    transform: scaleY(0.8);
-  }
-  70% {
-    transform: scaleY(0.4);
-  }
-}
-@keyframes vwMid {
-  0%,
-  100% {
-    transform: scaleY(0.2);
-  }
-  45% {
-    transform: scaleY(0.65);
-  }
-  75% {
-    transform: scaleY(0.3);
-  }
-}
-@keyframes vwOuter {
-  0%,
-  100% {
-    transform: scaleY(0.18);
-  }
-  50% {
     transform: scaleY(0.5);
   }
 }

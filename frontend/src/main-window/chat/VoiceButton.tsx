@@ -17,19 +17,35 @@
 //        stt:error { message, recoverable }
 //
 // ── 统一状态机（前端相位 ↔ 用户心智 ↔ UI/音效）──
-//   idle       空闲        34px 圆胶囊·麦克风图标；hover 延展「图标+语音输入」
-//   activating 启动中      点击即宽胶囊·accent 音波（弱）；可再点取消
-//   listening  聆听·转录   stt:ready 到达 · 红色音波 + 「叮」上行提示音
-//   finishing  收尾识别    停止后尾部识别 · accent 音波（更弱）+ 「咚」下行提示音
+//   idle       空闲        34px 圆胶囊·实心麦克风图标；hover 延展「图标+语音输入」
+//   activating 启动中      点击即展开 voice-note 胶囊（accent·静默波形）；可再点取消
+//   listening  聆听·转录   stt:ready 到达 · 红点+计时+滚动波形 + 「叮」上行提示音；
+//                          左滑胶囊 = 取消手势（拉动 ≥1 松开执行，Esc 同效）
+//   finishing  收尾识别    停止后尾部识别 · accent 波形冻结 + 「咚」下行提示音
 //   错误                   stt:error → 低沉警示音 + 错误文案 4s
+//
+// ── 视觉来源（voice-note 胶囊样式移植）──
+// 激活态胶囊整体移植「按住录音/左滑取消」原型的视觉语言：红点+计时+滚动波形、
+// 行滑移淡出、取消圆盘就位、弹性展开收拢；配色走 token 桥（error/accent/
+// void-primary），详见 chat-input.css voice-note 段。交互按本机口径保持
+// 「点击开/关」，原型手势裁剪：无片段预览/播放/擦洗（无真实音频产物），
+// 松开即收尾转写进输入框。
 //
 // stt_status 不可用时降级：no_microphone / 探测失败 → 整体隐藏（用户无法自救）；
 // model_missing → 保留按钮，点击弹下载确认框（stt_download_model 后台下载，
 // stt:download 事件驱动进度，完成后重新探测恢复正常态）。
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+} from 'react'
 import { createPortal } from 'react-dom'
-import { IconMic, IconX } from '../../ui/Icons'
+import { IconX } from '../../ui/Icons'
 import { Button, IconButton } from '../../ui/Button'
 import { listen } from '../../core/bridge'
 import {
@@ -64,6 +80,47 @@ const FINISH_TIMEOUT_MS = 60_000
 /// 30s 覆盖冷启动模型加载
 const ACTIVATE_TIMEOUT_MS = 30_000
 
+/* ── voice-note 视觉常量（样式移植自语音胶囊原型，比例适配输入行胶囊）──────── */
+const VN_BARS = 12 // 波形条数（原型 28，按输入胶囊宽度缩放）
+const VN_SAMPLE = 70 // 波形采样间隔 ms（原型同值）
+const VN_GAIN = 60 // 电平增益 0..100（原型默认值）
+const VN_CANCEL = 64 // 左滑取消触发距离 px（原型 90，胶囊更小按比例收紧）
+const VN_CLOSE_MS = 360 // 取消后收拢动画时长 ms（原型同值）
+
+/* 粗略语音形状：音节藏于词组、词组间留隙（原型原样保留，作无真实电平事件的驱动） */
+function vnStandIn(t: number) {
+  const syll = Math.abs(Math.sin(t * 6.1) * Math.sin(t * 1.9 + 0.7))
+  const phrase = Math.sin(t * 0.9 + 0.4) > -0.55 ? 1 : 0.1
+  return Math.min(1, 0.06 + syll * phrase * (0.5 + Math.random() * 0.5))
+}
+
+const vnClamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
+
+const vnFmt = (ms: number) => {
+  const s = Math.floor(ms / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/* 实心麦克风（原型 MicMark：实心胶囊机身 + 弧线，与 lucide 描线版区分） */
+function VnMicMark() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <rect x="8.5" y="2" width="7" height="12.5" rx="3.5" fill="currentColor" stroke="none" />
+      <path d="M5 11.5a7 7 0 0 0 14 0" />
+      <path d="M12 18.5V22" />
+    </svg>
+  )
+}
+
 interface VoiceButtonProps {
   /** 终句文本提交（父组件拼入输入框） */
   onFinalText: (text: string) => void
@@ -97,6 +154,16 @@ export const VoiceButton = forwardRef<VoiceButtonHandle, VoiceButtonProps>(funct
   const [showDownload, setShowDownload] = useState(false)
   const [phase, setPhase] = useState<VoicePhase>('idle')
   const [errorMsg, setErrorMsg] = useState('')
+  /* voice-note 视觉态：左滑拉动量（0..1）、取消收拢遮罩、波形采样序列与计时 */
+  const [pull, setPull] = useState(0)
+  const [closing, setClosing] = useState(false)
+  const [levels, setLevels] = useState<number[]>([])
+  const [vnMs, setVnMs] = useState(0)
+  const pullRef = useRef(0)
+  const dragX = useRef<number | null>(null)
+  const rawLen = useRef(0)
+  const suppressClick = useRef(false)
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>()
   const phaseRef = useRef<VoicePhase>('idle')
   phaseRef.current = phase
   const errorTimer = useRef<ReturnType<typeof setTimeout>>()
@@ -245,6 +312,26 @@ export const VoiceButton = forwardRef<VoiceButtonHandle, VoiceButtonProps>(funct
     prevPhase.current = phase
   }, [phase])
 
+  // ── voice-note 波形采样：listening 期间以占位电平驱动滚动条形（原型同源函数）。
+  // 离开 listening 即停采样，levels 冻结留供 finishing/取消收拢使用。无真实
+  // 电平事件，样形由 vnStandIn 模拟语音节奏（音节+词组+留隙）──
+  useEffect(() => {
+    if (phase !== 'listening') return
+    const raw: number[] = []
+    rawLen.current = 0
+    setLevels([])
+    setVnMs(0)
+    const t0 = performance.now()
+    const timer = window.setInterval(() => {
+      const took = performance.now() - t0
+      raw.push(vnStandIn(took / 1000))
+      rawLen.current = raw.length
+      setLevels(raw.slice(-VN_BARS))
+      setVnMs(took)
+    }, VN_SAMPLE)
+    return () => clearInterval(timer)
+  }, [phase])
+
   // ── 命令式句柄：发送前冲刷语音会话（详见 VoiceButtonHandle 注释）──
   useImperativeHandle(
     ref,
@@ -280,7 +367,18 @@ export const VoiceButton = forwardRef<VoiceButtonHandle, VoiceButtonProps>(funct
   // 未探测 / 无麦克风 / 探测失败 → 整体隐藏；模型缺失保留按钮（点击走下载流）
   if (!available && !modelMissing) return null
 
+  // ── 左滑取消（voice-note 手势）：armed 松开或 Esc 执行。stt:done 随后把引擎
+  // 相位复位 idle；closing 遮罩在 360ms 内保住胶囊外壳，避免复位抢在收拢动画
+  // 前卸载内容条 ──
+  const cancelSession = () => {
+    sttCancel().catch(() => {})
+    setClosing(true)
+    clearTimeout(closeTimer.current)
+    closeTimer.current = setTimeout(() => setClosing(false), VN_CLOSE_MS)
+  }
+
   const handleClick = async () => {
+    if (closing) return // 取消收拢期间的点击不参与状态机
     setErrorMsg('')
     if (modelMissing) {
       setShowDownload(true)
@@ -345,36 +443,114 @@ export const VoiceButton = forwardRef<VoiceButtonHandle, VoiceButtonProps>(funct
 
   const dlPct = dl.progress ? sttDownloadProgressPct(dl.progress) : null
 
+  // ── voice-note 渲染量 ──
+  const armed = pull >= 1
+  const vnOpen = phase !== 'idle' || closing // 取消收拢期间保持展开外壳
+  const vnActive = phase === 'listening' || closing // 圆点/计时档位（启动期不点灯）
+  const g = 0.4 + (VN_GAIN / 100) * 1.2
+  const start = rawLen.current - levels.length
+  const bars = [] as ReactElement[]
+  for (let j = 0; j < VN_BARS; j++) {
+    const k = levels.length - VN_BARS + j
+    const v = k >= 0 ? levels[k] : 0
+    bars.push(
+      <i
+        key={k >= 0 ? start + k : `e${j}`}
+        className="vn-bar"
+        style={{ '--l': vnClamp(v * g, 0, 1).toFixed(3) } as CSSProperties}
+      />,
+    )
+  }
+
   return (
     <>
-      {/* 胶囊按钮：idle 默认 Chip 容器仅图标，hover 延展「图标+文字」；点击后胶囊保持
-          展开宽度不变，内部整体切换为 9 条镜像包络音波（中心振幅最大向外递减+
-          相位错开形成波传播，状态全靠颜色/节奏区分——见文件头状态机表） */}
+      {/* 胶囊按钮（voice-note 样式）：idle Chip 仅实心麦克风，hover 延展「图标+文字」；
+          激活后弹性展开为「红点+计时+波形」胶囊，录音中左滑出取消圆盘、armed 松开执行。
+          pointer 捕获保证拖拽跨出胶囊仍连续；armed 取消后吞掉紧随的 click，
+          否则松手会被状态机误判为「点击结束」。 */}
       <IconButton
         variant="raw"
-        className={`chat-voice-btn${phase !== 'idle' ? ` ${phase}` : ''}`}
+        className={`chat-voice-btn${vnOpen ? (closing ? ' cancel' : ` ${phase}`) : ''}`}
         label={label}
         title={errorMsg || label}
-        onClick={handleClick}
+        onClick={() => {
+          if (suppressClick.current) {
+            suppressClick.current = false
+            return
+          }
+          handleClick()
+        }}
         disabled={disabled || phase === 'finishing'}
+        style={vnOpen ? ({ '--pull': pull.toFixed(3) } as CSSProperties) : undefined}
+        onPointerDown={e => {
+          if (phaseRef.current !== 'listening') return
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId)
+          } catch {
+            /* 脚本合成的 pointer 无 id 可捕获 */
+          }
+          dragX.current = e.clientX
+          pullRef.current = 0
+          setPull(0)
+        }}
+        onPointerMove={e => {
+          if (phaseRef.current !== 'listening' || dragX.current === null) return
+          const p = vnClamp((dragX.current - e.clientX) / VN_CANCEL, 0, 1)
+          pullRef.current = p
+          setPull(p)
+        }}
+        onPointerUp={e => {
+          try {
+            e.currentTarget.releasePointerCapture(e.pointerId)
+          } catch {
+            /* 从未捕获的指针 */
+          }
+          if (phaseRef.current !== 'listening' || dragX.current === null) return
+          dragX.current = null
+          if (pullRef.current >= 1) {
+            suppressClick.current = true
+            cancelSession()
+          }
+          pullRef.current = 0
+          setPull(0)
+        }}
+        onPointerCancel={() => {
+          dragX.current = null
+          pullRef.current = 0
+          setPull(0)
+        }}
+        onKeyDown={e => {
+          if (e.key === 'Escape' && phaseRef.current === 'listening' && !closing) {
+            e.preventDefault()
+            cancelSession()
+          }
+        }}
       >
-        {phase !== 'idle' ? (
-          <span className="voice-wave" aria-hidden>
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-          </span>
+        {vnOpen ? (
+          <>
+            <span className="vn-rec" aria-hidden="true">
+              {vnActive && <span className="vn-dot" />}
+              {vnActive && <span className="vn-time">{vnFmt(vnMs)}</span>}
+              <span className="vn-wave">{bars}</span>
+            </span>
+            {phase === 'listening' && !closing && (
+              <span className="vn-cancel" data-on={armed || undefined} aria-hidden="true">
+                <IconX size={13} strokeWidth={2.4} />
+              </span>
+            )}
+            {phase === 'listening' && !closing && (
+              <span className="vn-hint" data-on data-armed={armed || undefined} aria-hidden="true">
+                {armed ? t('input.voiceReleaseCancel') : t('input.voiceSlideCancel')}
+              </span>
+            )}
+          </>
         ) : (
-          <IconMic size={15} />
+          <>
+            <VnMicMark />
+            {/* 文字仅 idle 态 hover 延展呈现；进入胶囊态后不再显示文字 */}
+            <span className="voice-btn-label">{label}</span>
+          </>
         )}
-        {/* 文字仅 idle 态 hover 延展呈现；进入音波状态后不再显示文字 */}
-        {phase === 'idle' && <span className="voice-btn-label">{label}</span>}
       </IconButton>
 
       {/* ── 模型下载确认弹窗（复用 cmd-modal 模式，与 workflow 权限确认一致）── */}

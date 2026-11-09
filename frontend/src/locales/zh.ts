@@ -263,6 +263,8 @@ const zh: Record<string, string> = {
   'input.voiceListening': '正在识别 · 点击结束',
   'input.voiceFinishing': '收尾识别中…',
   'input.voiceFailed': '语音识别失败',
+  'input.voiceSlideCancel': '‹ 左滑取消',
+  'input.voiceReleaseCancel': '松开取消',
   'input.voiceAutoStop': '已达最长录音时间，自动结束识别',
   'input.voiceNeedModel': '下载语音模型后可用',
   'input.voiceDlTitle': '下载语音模型',

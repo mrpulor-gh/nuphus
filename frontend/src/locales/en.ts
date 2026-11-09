@@ -275,6 +275,8 @@ const en: Record<string, string> = {
   'input.voiceListening': 'Listening → click to stop',
   'input.voiceFinishing': 'Finishing...',
   'input.voiceFailed': 'Voice recognition failed',
+  'input.voiceSlideCancel': '‹ Slide left to cancel',
+  'input.voiceReleaseCancel': 'Release to cancel',
   'input.voiceAutoStop': 'Max recording time reached, stopped automatically',
   'input.voiceNeedModel': 'Download the voice model to enable',
   'input.voiceDlTitle': 'Download Voice Model',
