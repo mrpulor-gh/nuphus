@@ -170,6 +170,63 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '1.4.0',
+    date: '2026-11-09',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: 'cfbe3b6d',
+            summary: '预览标注输入在 IME 组合期间保持稳定，不再被输入法打断',
+          },
+          {
+            pr: null,
+            commit: '4a494cdb',
+            summary:
+              '移动端默认无线局域网直连并支持自配服务端地址；官方中继线路下线，存量官方配置自动清理，异地访问转向自建 relay-server',
+          },
+          {
+            pr: null,
+            commit: '4c723e11',
+            summary:
+              'refine 运行相互隔离：结构上杜绝嵌套自触发，refine 不再受上下文预算硬停与会话收尾钩子约束',
+          },
+          {
+            pr: null,
+            commit: 'eca8792a',
+            summary:
+              '临时对话失败轮从会话历史补录已执行步骤，模型错误按余额/鉴权/限流等七类归因并给可操作提示与诊断视图',
+          },
+          {
+            pr: null,
+            commit: '3373290e',
+            summary: '工作流新增图像产物列表（<capture>_files 按生成顺序）与本地视频首帧输入',
+          },
+          {
+            pr: null,
+            commit: 'f628a445',
+            summary:
+              '截屏芯片/胶囊/历史图可复制文件路径，文件菜单新增「另存为…」持久导出（copy_file_as）',
+          },
+          {
+            pr: null,
+            commit: '511b8dac',
+            summary:
+              '无 key 本地 provider 的可用判定统一（8 处重复判定收敛），本地模型的发送、启动绑定、模型切换与工作流注入全部恢复',
+          },
+          {
+            pr: null,
+            commit: 'fca4aa4e',
+            summary:
+              '语音输入按钮重做：voice-note 录音胶囊（红点+计时+滚动波形）+ 聆听中左滑取消，STT 引擎接线不变',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '1.3.0',
     date: '2026-11-04',
     contributors: [
