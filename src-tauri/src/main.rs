@@ -936,7 +936,12 @@ commands::set_raise_on_done,
                 let llm_config = state.runtime.lock()
                     .ok()
                     .and_then(|g| g.llm_config.clone())
-                    .filter(|c| !c.model.is_empty() && (!c.api_key.is_empty() || commands::config::llm::oauth_segment(&c.provider)));
+                    .filter(|c| {
+                        !c.model.is_empty()
+                            && (!c.api_key.is_empty()
+                                || commands::config::llm::oauth_segment(&c.provider)
+                                || commands::config::llm::provider_allows_no_key(&c.provider))
+                    });
 
                 if let Some(cfg) = llm_config {
                     let registry = nuphus::config::ModelRegistry::from_single(

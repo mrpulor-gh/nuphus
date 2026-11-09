@@ -28,15 +28,50 @@ pub(crate) fn oauth_segment(name: &str) -> bool {
     get_config_path().is_some_and(|p| nuphus::config::auth_state::provider_auth(&p, name).has_oauth)
 }
 
-fn authentication_ready(provider: &str, has_key: bool) -> bool {
+fn authentication_ready(provider: &str, has_usable_key: bool, allows_no_key: bool) -> bool {
     let auth = get_config_path()
         .map(|path| nuphus::config::auth_state::provider_auth(&path, provider))
         .unwrap_or_default();
     if auth.oauth_configured {
-        auth.has_oauth
-    } else {
-        has_key
+        return auth.has_oauth;
     }
+    if has_usable_key {
+        return true;
+    }
+    // 无 key 的合法场景：无鉴权端点（local / 自定义段）且配置段已落盘。
+    // 段不存在 → 用户尚未完成任何配置，仍判未配置。
+    allows_no_key && provider_segment_exists(provider)
+}
+
+/// 该 provider 段是否允许「无 API key」挂载/切换/发送。
+///
+/// 判据与 `fetch_provider_models` / `refresh_provider_models` / `configure_llm`
+/// 同源，避免同一语义在多处漂移：
+/// - 自定义段（custom / custom-*）：地址与密钥都由用户自填，可能本就无鉴权
+///   （llama-swap / 无 key 中转）；
+/// - Provider 元数据未声明鉴权方案（`auth_header()` 为空串）：local 等本机服务
+///   （Ollama / llama.cpp / vLLM）默认无鉴权。
+///
+/// 官方远程服务商恒为 false —— 空鉴权头会把请求发成匿名调用，必须强制 key。
+pub(crate) fn provider_allows_no_key(provider: &str) -> bool {
+    if is_custom_segment_name(provider) {
+        return true;
+    }
+    ProviderRegistry::builtin()
+        .get(provider_kind_for_segment(provider).as_str())
+        .map(|p| p.auth_header().is_empty())
+        .unwrap_or(false)
+}
+
+/// 内存绑定的「已配置」判定（`is_llm_configured` 两个分支共用）。
+///
+/// 无鉴权端点的 key 可以为空；官方远程服务商沿用原有 10 字符门槛，排除
+/// 「1」「x」这类明显占位。无鉴权端点不设门槛——它本就不要求鉴权，
+/// 用户填的短占位值同样可用（请求由 `resolve_auth` 决定是否携带鉴权头）。
+fn cfg_authentication_ready(cfg: &LlamaConfig) -> bool {
+    let allows_no_key = provider_allows_no_key(&cfg.provider);
+    let has_usable_key = !cfg.api_key.is_empty() && (cfg.api_key.len() >= 10 || allows_no_key);
+    authentication_ready(&cfg.provider, has_usable_key, allows_no_key)
 }
 
 fn oauth_entry(entry: &toml::Value) -> bool {
@@ -114,7 +149,11 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
         },
     };
 
-    if (api_key.is_empty() && !oauth_segment(&provider_name)) || model_id.is_empty() {
+    if (api_key.is_empty()
+        && !oauth_segment(&provider_name)
+        && !provider_allows_no_key(&provider_name))
+        || model_id.is_empty()
+    {
         return;
     }
 
@@ -162,7 +201,8 @@ fn first_mountable_provider(doc: &toml::Value) -> Option<(String, String, String
         let k_raw = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
         let k = nuphus::cookies::decrypt_secret(k_raw).unwrap_or_default();
         let u = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
-        if (!k.is_empty() || oauth_entry(entry)) && !name.is_empty() {
+        if !name.is_empty() && (!k.is_empty() || oauth_entry(entry) || provider_allows_no_key(name))
+        {
             let model = entry
                 .get("models")
                 .and_then(|arr| arr.as_array())
@@ -446,7 +486,7 @@ fn find_startup_binding(
                     .any(|m| m.get("id").and_then(|i| i.as_str()) == Some(model))
             })
             .unwrap_or(false);
-        if has_model && (!k.is_empty() || oauth_entry(entry)) {
+        if has_model && (!k.is_empty() || oauth_entry(entry) || provider_allows_no_key(name)) {
             let hit = (
                 name.to_string(),
                 model.to_string(),
@@ -932,13 +972,14 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
         return Err("请先完成该账号的 OAuth 授权登录".into());
     }
     //
-    // 自定义中转站允许无 key 切换（Ollama / llama-swap / 无鉴权网关：地址自己填，
-    // 本就不需要鉴权）—— 空串表示「不携带鉴权头」。前提是配置段已存在，否则切换会
-    // 「成功」但请求无处可发；官方远程服务商保持原强制校验，避免空鉴权头串台。
+    // 无鉴权段允许无 key 切换：自定义中转站（Ollama / llama-swap / 无鉴权网关：
+    // 地址自己填，本就不需要鉴权）与 local 等本机服务（Provider 元数据未声明鉴权
+    // 方案）—— 空串表示「不携带鉴权头」。前提是配置段已存在，否则切换会「成功」
+    // 但请求无处可发；官方远程服务商保持原强制校验，避免空鉴权头串台。
     let api_key = match read_provider_api_key_from_config_toml(&provider) {
         Some(k) => k,
         None if oauth_segment(&provider)
-            || (is_custom_segment_name(&provider) && provider_segment_exists(&provider)) =>
+            || (provider_segment_exists(&provider) && provider_allows_no_key(&provider)) =>
         {
             String::new()
         }
@@ -1265,12 +1306,12 @@ pub async fn configure_llm(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "minimax".to_string());
 
-    // 空 key 只对自定义中转站放行（本地网关 / Ollama / 无 key 中转：地址由用户自填，
-    // 可能本就不需要鉴权，保存动作仍需可用）。官方远程服务商保持强制 —— 空鉴权头会把
-    // 请求发成匿名调用，且用户往往只是漏填。
+    // 空 key 只对无鉴权端点放行：自定义中转站（本地网关 / Ollama / 无 key 中转）
+    // 与 local 等本机服务——地址由用户自填，可能本就不需要鉴权，保存动作仍需可用。
+    // 官方远程服务商保持强制 —— 空鉴权头会把请求发成匿名调用，且用户往往只是漏填。
     // 文案独立于自定义实例（后者密钥框写的是「无鉴权端点可留空」）：官方这句必须点明
     // 「本服务商需要密钥」，否则会被读成同一个可留空字段的误报。
-    if api_key.is_empty() && !is_custom_segment_name(&resolved_provider) {
+    if api_key.is_empty() && !provider_allows_no_key(&resolved_provider) {
         return Err(format!(
             "{} 需要 API Key 才能接入：请输入密钥后重试",
             resolved_provider
@@ -1685,7 +1726,11 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
                                     entry.get("api_key").and_then(|k| k.as_str()).unwrap_or("");
                                 let base_url =
                                     entry.get("base_url").and_then(|u| u.as_str()).unwrap_or("");
-                                if (!api_key.is_empty() || oauth_entry(entry)) && !name.is_empty() {
+                                if !name.is_empty()
+                                    && (!api_key.is_empty()
+                                        || oauth_entry(entry)
+                                        || provider_allows_no_key(name))
+                                {
                                     let model_id = entry
                                         .get("models")
                                         .and_then(|m| m.as_array())
@@ -1736,18 +1781,12 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
         // Re-acquire lock
         let guard = state.runtime.lock().map_err(|e| e.to_string())?;
         match guard.llm_config.as_ref() {
-            Some(cfg) => Ok(authentication_ready(
-                &cfg.provider,
-                !cfg.api_key.is_empty() && cfg.api_key.len() >= 10,
-            )),
+            Some(cfg) => Ok(cfg_authentication_ready(cfg)),
             None => Ok(false),
         }
     } else {
         match guard.llm_config.as_ref() {
-            Some(cfg) => Ok(authentication_ready(
-                &cfg.provider,
-                !cfg.api_key.is_empty() && cfg.api_key.len() >= 10,
-            )),
+            Some(cfg) => Ok(cfg_authentication_ready(cfg)),
             None => Ok(false),
         }
     }
@@ -1891,11 +1930,12 @@ pub fn add_provider_model(provider: String, model_id: String) -> Result<(), Stri
         return Err("模型代号不能为空".to_string());
     }
     // 只允许已登记的服务商（无 provider 段时 upsert 会静默跳过，需提前拦下给明确反馈）。
-    // 判据：官方服务商看「是否已配 key」（无 key 的官方段不可用）；自定义实例看
-    // 「配置段是否存在」—— 无鉴权网关（Ollama / 无 key 中转）本来就没有 key，
-    // 用 key 判定会把它们的手动添加路径整条封死（Anthropic 兼容实例只有这条路）。
+    // 判据：官方服务商看「是否已配 key」（无 key 的官方段不可用）；无鉴权段
+    // （自定义实例 / local 等本机服务）看「配置段是否存在」—— Ollama / 无 key
+    // 中转本来就没有 key，用 key 判定会把它们的手动添加路径整条封死
+    // （Anthropic 兼容实例只有这条路）。
     let registered = list_configured_providers().iter().any(|p| p == &provider)
-        || (is_custom_segment_name(&provider) && provider_segment_exists(&provider));
+        || (provider_segment_exists(&provider) && provider_allows_no_key(&provider));
     if !registered {
         return Err(if is_custom_segment_name(&provider) {
             "该自定义模型尚未创建，请先保存基本信息".to_string()
@@ -3331,6 +3371,37 @@ pub async fn startup_model_calibration(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 无鉴权判据：内置 local 未声明鉴权方案（可无 key 挂载），官方远程服务商
+    /// 必须声明鉴权头，自定义段按段名前缀放行。
+    ///
+    /// 这个判据被启动装载 / is_llm_configured / switch_model / configure_llm
+    /// 共用——任何一处退回「key 非空才算可用」都会让本地模型保存后被判未配置
+    /// （实测症状：选择并保存本地模型后仍弹「Please configure API Key first」）。
+    #[test]
+    fn provider_allows_no_key_covers_local_custom_and_rejects_remote() {
+        let registry = ProviderRegistry::builtin();
+        // 元数据层：local 不携带鉴权头 —— 允许无 key 的根依据。
+        assert!(
+            registry
+                .get("local")
+                .is_some_and(|p| p.auth_header().is_empty()),
+            "builtin local 必须声明无鉴权（auth_header 为空串）"
+        );
+        // 官方远程：声明了鉴权头的服务商不允许无 key。
+        for id in ["deepseek", "openai", "anthropic"] {
+            assert!(
+                registry
+                    .get(id)
+                    .is_some_and(|p| !p.auth_header().is_empty()),
+                "{id} 必须声明鉴权头"
+            );
+        }
+        // 自定义段按段名前缀放行（不依赖磁盘配置）。
+        assert!(provider_allows_no_key("custom"));
+        assert!(provider_allows_no_key("custom-team-a"));
+        assert!(provider_allows_no_key("local"));
+    }
 
     /// 诚实显示：三源全空 → 空档位（custom 中转取不到就不显示旋钮）
     #[test]
