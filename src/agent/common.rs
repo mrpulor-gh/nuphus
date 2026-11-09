@@ -465,10 +465,7 @@ pub fn is_retryable_llm_error(err: &str) -> bool {
     // --- Retryable: server/network/rate-limit ---
     // 5xx 状态码同样走边界匹配：错误体里的 request id / 时间戳不得命中。
     let retryable_codes = ["500", "502", "503", "504", "529"];
-    if retryable_codes
-        .iter()
-        .any(|c| contains_status_code(&e, c))
-    {
+    if retryable_codes.iter().any(|c| contains_status_code(&e, c)) {
         return true;
     }
     let retryable = [
@@ -689,10 +686,7 @@ pub fn classify_llm_error(err: &str) -> LlmErrorKind {
     }
 
     // --- 鉴权 ---
-    if ["401", "403"]
-        .iter()
-        .any(|c| contains_status_code(&e, c))
-    {
+    if ["401", "403"].iter().any(|c| contains_status_code(&e, c)) {
         return LlmErrorKind::Auth;
     }
     let auth = [
@@ -714,10 +708,7 @@ pub fn classify_llm_error(err: &str) -> LlmErrorKind {
 
     // --- 参数 / 通用 400 --- 放在最后：上面几类都没命中时，400/422 才归到这里。
     // 这也保证「400 + 内容审核」的响应先被 ContentPolicy 接走（见上方排序说明）。
-    if ["400", "422"]
-        .iter()
-        .any(|c| contains_status_code(&e, c))
-    {
+    if ["400", "422"].iter().any(|c| contains_status_code(&e, c)) {
         return LlmErrorKind::Param;
     }
     let param = [
@@ -1009,7 +1000,9 @@ mod tests {
         );
 
         // 边界匹配不能削掉真实状态码的识别能力
-        assert!(!is_retryable_llm_error("API error 422: unprocessable entity"));
+        assert!(!is_retryable_llm_error(
+            "API error 422: unprocessable entity"
+        ));
         assert_eq!(
             classify_llm_error("API error 422: unprocessable entity"),
             LlmErrorKind::Param
