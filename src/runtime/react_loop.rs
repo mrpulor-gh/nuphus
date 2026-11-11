@@ -392,7 +392,6 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
         //   上下文再次涨回 85% 时可继续提炼——长任务无需切换 session。
         //   `ctx_hard_stop_failed` 只用于「失败后本轮不再重试」，避免同一水位
         //   紧循环重试烧穿 300s 超时预算。
-        let mut ctx_warned = false;
         let mut ctx_force_warned = false;
         let mut ctx_hard_stop_failed = false;
 
@@ -604,8 +603,10 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         );
                         if self.refine_in_loop(cancel_flag).await {
                             // 提炼成功 → 会话已压缩，进入新的上下文周期。
-                            ctx_warned = false;
+                            // 提示水位一并归零，否则压缩后 200K..旧水位 这段不会再提示。
                             ctx_force_warned = false;
+                            self.agent.context_hint_shown = false;
+                            self.agent.last_memory_hint_at = 0;
                         } else {
                             // 失败/超时/空摘要：本轮不再重试（避免同一水位紧循环
                             // 烧 300s 预算），降级为一次性硬劝导；turn-end 正常
@@ -630,16 +631,6 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             tokens,
                             cw
                         ));
-                    } else if let Some(pr) = tier.prompt_ratio() {
-                        if ratio >= pr && !ctx_warned {
-                            ctx_warned = true;
-                            self.agent.session.push_user_internal(format!(
-                                "[系统] 上下文用量已达 {:.0}%（约 {}/{} tokens）。请规划收敛：优先完成核心目标，非关键探索可省略，尽快输出结论。",
-                                ratio * 100.0,
-                                tokens,
-                                cw
-                            ));
-                        }
                     }
                 }
             }
@@ -1936,9 +1927,10 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 if !self.agent.context_hint_shown && ctx_tokens > 200_000 {
                     self.agent.session.push_user_internal(
                         format!(
-                            "[系统提示词] 当前上下文 {}K / {}K tokens。如需跨会话保留结论，请在最终交付之前写入记忆。",
+                            "[系统提示词] 上下文已使用 {}K / {}K tokens（{:.0}%）。如需跨会话保留结论，请在最终交付之前写入记忆。",
                             ctx_tokens / 1_000,
                             ctx_window / 1_000,
+                            ctx_tokens as f64 / ctx_window as f64 * 100.0,
                         )
                     );
                     self.agent.context_hint_shown = true;
@@ -1951,9 +1943,10 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 if ctx_tokens >= next_milestone {
                     self.agent.session.push_user_internal(
                         format!(
-                            "[系统提示词] 当前上下文 {}K / {}K tokens。如需跨会话保留结论，请在最终交付之前写入记忆。",
+                            "[系统提示词] 上下文已使用 {}K / {}K tokens（{:.0}%）。如需跨会话保留结论，请在最终交付之前写入记忆。",
                             ctx_tokens / 1_000,
                             ctx_window / 1_000,
+                            ctx_tokens as f64 / ctx_window as f64 * 100.0,
                         )
                     );
                     self.agent.last_memory_hint_at = next_milestone;
