@@ -32,6 +32,7 @@ ManifestDPIAwareness PerMonitorV2
 ${StrCase}
 ${StrLoc}
 ${StrStr}
+${StrTrimNewLines}
 
 ; StrFunc.nsh **没有** StrContains（2026-10-31 makensis 实测：
 ; `Invalid command: "${StrContains}"` → 整个安装包编译中止）。
@@ -43,6 +44,20 @@ ${StrStr}
   ${StrStr} ${out} "${out}" "${needle}"
 !macroend
 !define StrContains `!insertmacro NuphusStrContains`
+
+; 去掉注册表 InstallLocation 常见的首尾双引号。
+; 写入侧（Section Install 的 WriteRegStr）存的是 "$\"$INSTDIR$\""，读取侧若原样
+; 使用会得到带引号的路径，FileExists / SetOutPath 都会失败。
+!macro NuphusStripQuotes VAR
+  StrCpy $R9 ${VAR} 1
+  ${If} $R9 == '"'
+    StrCpy ${VAR} ${VAR} "" 1
+    StrCpy $R9 ${VAR} 1 -1
+    ${If} $R9 == '"'
+      StrCpy ${VAR} ${VAR} -1
+    ${EndIf}
+  ${EndIf}
+!macroend
 
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
@@ -1320,10 +1335,89 @@ Section Uninstall
   ${EndIf}
 SectionEnd
 
+; 解析已有安装目录：升级时优先沿用用户上次选择的路径，避免静默装到
+; currentUser 默认目录（%LOCALAPPDATA%\Nuphus）而在原目录留下旧版本。
+; 来源按可靠性排序，全部通过「目录中确实存在主程序」校验后才采用：
+;   1) 卸载键 InstallLocation（HKCU/HKLM × 64/32 视图，覆盖正常安装）
+;   2) 旧版 MANUPRODUCTKEY 默认值（兼容历史写入）
+;   3) 正在运行的 Nuphus 进程路径（覆盖免安装/手动目录，应用内更新必命中）
+;   4) 常见安装位置（最后兜底）
 Function RestorePreviousInstallLocation
-  ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
-  StrCmp $4 "" +2 0
-    StrCpy $INSTDIR $4
+  StrCpy $R2 ""
+
+  ; 1) 卸载键 InstallLocation（写入侧带引号，读取后统一去引号）
+  ${If} ${RunningX64}
+    SetRegView 64
+  ${EndIf}
+  ReadRegStr $R2 HKCU "${UNINSTKEY}" "InstallLocation"
+  ${If} $R2 == ""
+    ReadRegStr $R2 HKLM "${UNINSTKEY}" "InstallLocation"
+  ${EndIf}
+  ${If} ${RunningX64}
+    SetRegView 32
+  ${EndIf}
+  ${If} $R2 == ""
+    ReadRegStr $R2 HKCU "${UNINSTKEY}" "InstallLocation"
+  ${EndIf}
+  ${If} $R2 == ""
+    ReadRegStr $R2 HKLM "${UNINSTKEY}" "InstallLocation"
+  ${EndIf}
+
+  ; 2) 旧版默认值
+  ${If} $R2 == ""
+    ${If} ${RunningX64}
+      SetRegView 64
+    ${EndIf}
+    ReadRegStr $R2 HKCU "${MANUPRODUCTKEY}" ""
+    ${If} $R2 == ""
+      ReadRegStr $R2 HKLM "${MANUPRODUCTKEY}" ""
+    ${EndIf}
+    ${If} ${RunningX64}
+      SetRegView 32
+    ${EndIf}
+  ${EndIf}
+
+  !insertmacro NuphusStripQuotes $R2
+
+  ${If} $R2 == ""
+  ${OrIfNot} ${FileExists} "$R2\${MAINBINARYNAME}.exe"
+    StrCpy $R2 ""
+
+    ; 3) 运行中的进程（应用内更新时一定命中）。
+    ;    用 wmic 而非 PowerShell：实测无控制台的安装器里
+    ;    `powershell -Command` 返回空 stdout，wmic 正常。
+    nsExec::ExecToStack 'wmic process where name="${MAINBINARYNAME}.exe" get ExecutablePath /value'
+    Pop $0
+    Pop $R3
+    ${StrTrimNewLines} "$R3" $R3
+    ${StrLoc} $R4 "$R3" "ExecutablePath=" ">"
+    ${If} $R4 != ""
+      IntOp $R4 $R4 + 15
+      StrCpy $R3 "$R3" "" $R4
+      ${StrTrimNewLines} "$R3" $R3
+      ${GetParent} "$R3" $R3
+      ${If} ${FileExists} "$R3\${MAINBINARYNAME}.exe"
+        StrCpy $R2 "$R3"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+
+  ; 4) 常见安装位置兜底
+  ${If} $R2 == ""
+    ${If} ${FileExists} "$LOCALAPPDATA\${PRODUCTNAME}\${MAINBINARYNAME}.exe"
+      StrCpy $R2 "$LOCALAPPDATA\${PRODUCTNAME}"
+    ${ElseIf} ${FileExists} "$PROGRAMFILES64\${PRODUCTNAME}\${MAINBINARYNAME}.exe"
+      StrCpy $R2 "$PROGRAMFILES64\${PRODUCTNAME}"
+    ${ElseIf} ${FileExists} "$PROGRAMFILES\${PRODUCTNAME}\${MAINBINARYNAME}.exe"
+      StrCpy $R2 "$PROGRAMFILES\${PRODUCTNAME}"
+    ${EndIf}
+  ${EndIf}
+
+  ${If} $R2 != ""
+  ${AndIf} ${FileExists} "$R2\${MAINBINARYNAME}.exe"
+    StrCpy $INSTDIR "$R2"
+    DetailPrint "沿用已有安装目录: $INSTDIR"
+  ${EndIf}
 FunctionEnd
 
 Function Skip
