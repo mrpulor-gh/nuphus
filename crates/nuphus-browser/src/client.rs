@@ -5382,6 +5382,103 @@ document.addEventListener('DOMContentLoaded', function() {
         cleanup_profile("stack_probe");
     }
 
+    /// Regression: a trusted click and a ref-scoped evaluation must both reach
+    /// inside an iframe. The click used frame-relative coordinates before the
+    /// content-quads fix and landed outside the button.
+    #[tokio::test]
+    #[ignore = "launches real Chrome; requires Chrome installed locally"]
+    async fn trusted_click_and_evaluate_reach_inside_iframe() {
+        const PAGE: &str = r#"<!doctype html><html><body>
+<iframe id="f" style="width:320px;height:220px;border:0"
+  srcdoc="<button id='b' style='display:block;margin:24px' onclick='parent.postMessage(&quot;clicked&quot;,&quot;*&quot;)'>inner button</button><input id='i' value='inner-value'>"></iframe>
+<script>window.received=null;window.addEventListener('message',e=>window.received=e.data);</script>
+</body></html>"#;
+
+        let mut client = isolated_client("iframe_scope");
+        client.launch(true).await.expect("launch headless");
+        client
+            .navigate(&fixture_url("iframe_scope", PAGE))
+            .await
+            .expect("navigate");
+
+        let snap = client.snapshot(false, None).await.expect("snapshot");
+        let button_ref = snap
+            .lines()
+            .find(|l| l.contains("inner button"))
+            .and_then(|l| l.split_whitespace().find(|w| w.starts_with('@')))
+            .expect("button ref in iframe")
+            .to_string();
+
+        let value = client
+            .evaluate_at_ref("document.getElementById('i').value", &button_ref)
+            .await
+            .expect("evaluate_at_ref");
+        assert_eq!(value.as_str(), Some("inner-value"));
+
+        client
+            .click_trusted(&button_ref, "left")
+            .await
+            .expect("trusted click");
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let received = client
+            .evaluate("JSON.stringify(window.received)")
+            .await
+            .expect("read receipt");
+        assert_eq!(received.as_str(), Some("\"clicked\""));
+
+        client.close().await.expect("close");
+        cleanup_profile("iframe_scope");
+    }
+
+    /// Regression: upload must confirm the input accepted the file and must
+    /// reject a directory path instead of reporting success.
+    #[tokio::test]
+    #[ignore = "launches real Chrome; requires Chrome installed locally"]
+    async fn upload_verifies_metadata_and_rejects_directories() {
+        const PAGE: &str = r#"<!doctype html><html><body>
+<input type="file" id="f">
+<script>window.changed=0;document.getElementById('f').addEventListener('change',()=>window.changed++);</script>
+</body></html>"#;
+
+        let dir = std::env::temp_dir().join("nuphus_upload_fixture");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("hello.txt");
+        std::fs::write(&file, b"hello-nuphus").expect("write file");
+
+        let mut client = isolated_client("upload_meta");
+        client.launch(true).await.expect("launch headless");
+        client
+            .navigate(&fixture_url("upload_meta", PAGE))
+            .await
+            .expect("navigate");
+
+        let out = client
+            .upload_file("#f", file.to_str().unwrap())
+            .await
+            .expect("upload");
+        assert!(out.contains("hello.txt"), "{out}");
+
+        let meta = client
+            .evaluate("(()=>{const f=document.getElementById('f').files[0];return f?JSON.stringify({n:f.name,s:f.size}):'null'})()")
+            .await
+            .expect("read metadata");
+        let meta = meta.as_str().unwrap_or("");
+        assert!(meta.contains("hello.txt"), "{meta}");
+        assert!(meta.contains("\"s\":12"), "{meta}");
+        let changed = client.evaluate("window.changed").await.expect("changed");
+        assert_eq!(changed.as_u64(), Some(1));
+
+        let err = client
+            .upload_file("#f", dir.to_str().unwrap())
+            .await
+            .expect_err("directory must be rejected");
+        assert!(err.to_string().contains("regular file"), "{err}");
+
+        client.close().await.expect("close");
+        cleanup_profile("upload_meta");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Test client with an isolated profile: avoids sharing the running Nuphus App's
     /// browser_profile_v2 (try_attach would connect to the App instance and hang navigate).
     /// Each test uses its own directory to avoid SingletonLock conflicts.
