@@ -71,6 +71,48 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+  browser-real-chrome:
+    name: Real Chrome E2E (windows)
+    # nuphus-browser 的真实 Chrome 集成测试长期只以 #[ignore] 存在，CI 从不执行，
+    # 等于无人验证。这里集中跑它们：真实启动本机 Chrome（headless），覆盖 CDP 连接、
+    # iframe trusted click、文件上传元数据、新标签页归属、慢页导航等回归面。
+    #
+    # 只跑不需要可见桌面的用例。下面两个 --skip 是显式例外：
+    #   runtime_probe_does_not_detect_cdp_headed           —— 需要可见窗口
+    #   device_and_browser_info_does_not_detect_managed_browser —— 需要可见窗口 + 外网
+    # 新增 headed/联网用例时本 job 会红，届时把它加入 skip 或改成 headless，
+    # 避免「悄悄不跑」的历史重演。
+    #
+    # --test-threads=1：每个用例各自 launch 一个 Chrome，串行避免低资源 runner 上
+    # 的端口/CPU 争抢（本地串行 17 例约 38s）。
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify Chrome is available
+        shell: pwsh
+        # 只读版本号，不执行 chrome.exe（Windows 上 --version 会真的拉起浏览器）。
+        run: |
+          $candidates = @(
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+            "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+            "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+          )
+          $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $found) {
+            throw "Chrome not found. Looked in: $($candidates -join ', ')"
+          }
+          $version = (Get-Item $found).VersionInfo.ProductVersion
+          Write-Host "Chrome: $found ($version)"
+      - name: Run real-Chrome integration tests
+        shell: bash
+        run: |
+          cargo test -p nuphus-browser --lib -- --ignored --test-threads=1 \
+            --skip runtime_probe_does_not_detect_cdp_headed \
+            --skip device_and_browser_info_does_not_detect_managed_browser
+
   check-macos:
     name: Check (macOS arm64)
     # macos-15 免费 runner 为 Apple Silicon (arm64)，原生 aarch64 编译验证。

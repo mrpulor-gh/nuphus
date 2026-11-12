@@ -162,6 +162,7 @@ git commit -m "feat(chat): route images by vision resolution with strategy hints
 | Clippy | `cargo clippy --all-targets -- -D warnings` | PR、tag、手动 |
 | Check compilation | `cargo check --workspace` | PR、tag、手动 |
 | Test | `cargo test --workspace` | PR、tag、手动（ubuntu + windows） |
+| Real Chrome E2E | `cargo test -p nuphus-browser --lib -- --ignored`（跳过 2 个 headed/联网用例） | PR、tag、手动（windows，需本机 Chrome） |
 | macOS arm64 | `cargo check --workspace` + 定向契约测试 + 启动冒烟 | PR、tag、手动 |
 | TypeScript | `npx tsc --noEmit` | PR、tag、main |
 | ESLint | `npx eslint . --ext .ts,.tsx` | PR、tag、手动 |
