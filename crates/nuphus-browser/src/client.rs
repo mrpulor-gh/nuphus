@@ -3293,87 +3293,102 @@ impl BrowserClient {
         ))
     }
 
-    /// Upload a file to a file input element using the DataTransfer trick.
-    ///
-    /// Reads the file from disk, base64-encodes it, creates a File object in JS,
-    /// and sets it on the target `<input type="file">` element.
+    /// Upload a file to the exact CSS element or current AX snapshot ref.
+    /// Confirms the input's file metadata was accepted, not server-side upload
+    /// completion.
     pub async fn upload_file(
         &self,
         selector: &str,
         file_path: &str,
     ) -> Result<String, BrowserError> {
+        use base64::Engine;
+        let path = std::path::Path::new(file_path);
+        let metadata = std::fs::metadata(path)?;
+        if !metadata.is_file() {
+            return Err(BrowserError::Execution(format!(
+                "upload path is not a regular file: {}",
+                path.display()
+            )));
+        }
+        let bytes = std::fs::read(path)?;
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+        let mime_type = mime_guess::from_path(path).first_or_octet_stream();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let selector_lit = js_string_literal(selector);
+        let name_lit = js_string_literal(file_name);
+        let mime_lit = js_string_literal(mime_type.as_ref());
+
         let page = self.get_page().await?;
         let page_guard = page.lock().await;
+        let object_id = if let Some(digits) = selector.strip_prefix('@') {
+            let idx = digits.parse::<usize>().map_err(|_| {
+                BrowserError::Execution("upload ref must be a current @N snapshot ref".into())
+            })?;
+            let (backend_id, frame_label) = self.ax_ref(idx)?;
+            self.resolve_backend_node(&page_guard, backend_id, frame_label)
+                .await?
+        } else {
+            page_guard
+                .find_element(selector)
+                .await
+                .map_err(|e| cdp_err_ctx("upload: find_element failed", e))?
+                .remote_object_id
+                .clone()
+        };
 
-        // Read file from disk
-        let path = std::path::Path::new(file_path);
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
-            .to_string();
-
-        let data = std::fs::read(path).map_err(BrowserError::Io)?;
-
-        use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-
-        let mime = mime_guess::from_path(path)
-            .first_or_octet_stream()
-            .to_string();
-
-        // JS string literals via serde_json — safe against quotes/backslashes in
-        // the selector or file name (ad-hoc ' escaping was both incomplete and
-        // inconsistent with the rest of the codebase).
-        let selector_lit = js_string_literal(selector);
-        let name_lit = js_string_literal(&file_name);
-        let mime_lit = js_string_literal(&mime);
-
-        let js = format!(
-            r#"(function() {{
-    // Find the file input element
-    let el;
-    const sel = {selector_lit};
-    if (sel.startsWith('@')) {{
-        const idx = parseInt(sel.slice(1)) - 1;
-        const els = document.querySelectorAll('input[type="file"]');
-        if (!els[idx]) throw new Error('File input ' + sel + ' not found');
-        el = els[idx];
-    }} else {{
-        el = document.querySelector(sel);
-        if (!el) throw new Error('File input ' + sel + ' not found');
-    }}
-
-    // Decode base64 to Uint8Array
-    const b64 = '{b64}';
-    const byteChars = atob(b64);
-    const byteArr = new Uint8Array(byteChars.length);
-    for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-
-    // Create File object
-    const file = new File([byteArr], {name_lit}, {{ type: {mime_lit} }});
-
-    // Set via DataTransfer
-    const dt = new DataTransfer();
-    dt.items.add(file);
-    el.files = dt.files;
-    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-
-    return 'Uploaded ' + {name_lit} + ' (' + byteArr.length + ' bytes) to ' + sel;
-}})()"#,
+        let function_declaration = format!(
+            r#"function() {{
+                const input = this;
+                const selector = {selector_lit};
+                if (!input || input.tagName !== 'INPUT' || input.type !== 'file')
+                    throw new Error('Upload target is not input[type=file]: ' + selector);
+                if (!input.isConnected)
+                    throw new Error('Upload target is detached: ' + selector);
+                const binary = atob('{b64}');
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                const file = new File([bytes], {name_lit}, {{type: {mime_lit}}});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                input.files = dt.files;
+                const assigned = input.files;
+                if (!assigned || assigned.length !== 1 || assigned[0].name !== file.name ||
+                    assigned[0].size !== file.size || assigned[0].type !== file.type)
+                    throw new Error('Upload file metadata was not accepted; inspect before retrying: ' + selector);
+                input.dispatchEvent(new Event('change', {{bubbles: true}}));
+                return 'Uploaded ' + {name_lit} + ' (' + bytes.length + ' bytes) to ' + selector;
+            }}"#,
             selector_lit = selector_lit,
             b64 = b64,
             name_lit = name_lit,
-            mime_lit = mime_lit,
+            mime_lit = mime_lit
         );
-
-        let result = page_guard.evaluate(js).await.map_err(cdp_err)?;
-
-        let value: String = result
-            .into_value()
-            .unwrap_or_else(|_| "Upload completed".to_string());
-
-        Ok(value)
+        let cmd = RuntimeCallFunctionOn {
+            function_declaration,
+            object_id: Some(object_id.inner().clone()),
+            return_by_value: Some(true),
+            await_promise: Some(true),
+        };
+        let response = page_guard
+            .execute(cmd)
+            .await
+            .map_err(|e| cdp_err_ctx("file input assignment failed; inspect before retrying", e))?;
+        if let Some(details) = response.result.get("exceptionDetails") {
+            return Err(BrowserError::Execution(format!(
+                "File input assignment failed: {}",
+                details
+            )));
+        }
+        response
+            .result
+            .pointer("/result/value")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                BrowserError::Execution(
+                    "File input assignment result is unknown; inspect before retrying".into(),
+                )
+            })
     }
 
     /// Drag existing local files or directories onto an element using Chrome's
