@@ -385,6 +385,27 @@ impl Command for RuntimeCallFunctionOn {
     type Response = serde_json::Value;
 }
 
+/// Native file-only drag payload. The generated CDP type omits empty items;
+/// preserve it explicitly rather than adding a text item (getAsFile() is null).
+#[derive(Debug, Clone, Serialize)]
+struct InputFileDrag {
+    #[serde(rename = "type")]
+    event_type: String,
+    x: f64,
+    y: f64,
+    data: serde_json::Value,
+}
+
+impl Method for InputFileDrag {
+    fn identifier(&self) -> Cow<'static, str> {
+        "Input.dispatchDragEvent".into()
+    }
+}
+
+impl Command for InputFileDrag {
+    type Response = serde_json::Value;
+}
+
 /// CDP `Network.setCookie` — set a cookie with full attributes.
 #[derive(Debug, Clone, Serialize)]
 struct NetworkSetCookie {
@@ -3399,10 +3420,6 @@ impl BrowserClient {
         selector: &str,
         file_paths: &[String],
     ) -> Result<String, BrowserError> {
-        use chromiumoxide::cdp::browser_protocol::input::{
-            DispatchDragEventParams, DispatchDragEventType, DragData, DragDataItem,
-        };
-
         if file_paths.is_empty() {
             return Err(BrowserError::Execution(
                 "drag_files requires at least one path".to_string(),
@@ -3413,23 +3430,15 @@ impl BrowserClient {
         let page_guard = page.lock().await;
         let (x, y) = self.element_center(&page_guard, selector).await?;
 
-        let drag_data = DragData::builder()
-            // Chromium requires the `items` field even for file-only drags; the
-            // generated CDP type omits an empty Vec during serialization.
-            .item(DragDataItem::new("text/plain", ""))
-            .files(file_paths.iter().cloned())
-            .drag_operations_mask(1)
-            .build()
-            .map_err(|e| BrowserError::Execution(format!("drag data build: {e}")))?;
-
-        for event_type in [
-            DispatchDragEventType::DragEnter,
-            DispatchDragEventType::DragOver,
-            DispatchDragEventType::Drop,
-        ] {
-            let event = DispatchDragEventParams::new(event_type, x, y, drag_data.clone());
+        let data = serde_json::json!({"items": [], "files": file_paths, "dragOperationsMask": 1});
+        for event_type in ["dragEnter", "dragOver", "drop"] {
             page_guard
-                .execute(event)
+                .execute(InputFileDrag {
+                    event_type: event_type.into(),
+                    x,
+                    y,
+                    data: data.clone(),
+                })
                 .await
                 .map_err(|e| cdp_err_ctx("file drag event failed", e))?;
         }
