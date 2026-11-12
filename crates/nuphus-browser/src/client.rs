@@ -3576,6 +3576,58 @@ impl BrowserClient {
         Ok(value)
     }
 
+    /// Evaluate a script in the owning DOM frame of a current snapshot @N ref.
+    /// The resolved element is `this`; works for cross-origin iframes where the
+    /// top document cannot reach into the frame.
+    pub async fn evaluate_at_ref(
+        &self,
+        script: &str,
+        selector: &str,
+    ) -> Result<serde_json::Value, BrowserError> {
+        let idx = selector
+            .strip_prefix('@')
+            .and_then(|s| s.parse::<usize>().ok())
+            .ok_or_else(|| {
+                BrowserError::Execution("evaluate ref must be a current @N snapshot ref".into())
+            })?;
+        let (backend_id, frame_label) = self.ax_ref(idx)?;
+        let page = self.get_page().await?;
+        let page_guard = page.lock().await;
+        let object_id = self
+            .resolve_backend_node(&page_guard, backend_id, frame_label)
+            .await?;
+
+        // Same await heuristic as `evaluate`; async scripts must return a value.
+        let expression = if script.contains("await") {
+            format!("(async () => {{\n{}\n}})()", script)
+        } else {
+            script.to_string()
+        };
+        let quoted = serde_json::to_string(&expression)
+            .map_err(|e| BrowserError::Execution(e.to_string()))?;
+        let cmd = RuntimeCallFunctionOn {
+            function_declaration: format!("function(){{ return eval({}); }}", quoted),
+            object_id: Some(object_id.inner().clone()),
+            return_by_value: Some(true),
+            await_promise: Some(true),
+        };
+        let resp = page_guard
+            .execute(cmd)
+            .await
+            .map_err(|e| cdp_err_ctx("frame DOM evaluation failed", e))?;
+        if let Some(details) = resp.result.get("exceptionDetails") {
+            return Err(BrowserError::Execution(format!(
+                "frame DOM script failed: {}",
+                details
+            )));
+        }
+        Ok(resp
+            .result
+            .pointer("/result/value")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
+    }
+
     /// Browser back
     pub async fn back(&self) -> Result<String, BrowserError> {
         let page = self.get_page().await?;

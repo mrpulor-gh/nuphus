@@ -560,7 +560,14 @@ async fn run_browser_op(
         }
         "browser_evaluate" => {
             let script = params.get("script").and_then(|v| v.as_str()).unwrap_or("");
-            let value = client.evaluate(script).await.map_err(|e| e.to_string())?;
+            let value = if let Some(reference) = params.get("ref").and_then(|v| v.as_str()) {
+                client
+                    .evaluate_at_ref(script, reference)
+                    .await
+                    .map_err(|e| e.to_string())?
+            } else {
+                client.evaluate(script).await.map_err(|e| e.to_string())?
+            };
             // String 类型直接返回原始文本（避免 JSON 双重编码引号污染后续变量捕获）
             // 其他类型保留 JSON 序列化
             match &value {

@@ -503,9 +503,10 @@ impl ToolRegistry {
                 serde_json::json!({}),
                 &[]),
             tool_def("browser_evaluate",
-                "Execute arbitrary JavaScript in the current page.",
+                "Execute JavaScript in the current page, or in the owning DOM frame of a current snapshot @N ref (works for cross-origin iframes). With ref, `this` is the resolved element.",
                 json_props! {
-                    "script" => obj!("type"="string","description"="JavaScript code")
+                    "script" => obj!("type"="string","description"="JavaScript expression; async scripts containing await must return their result"),
+                    "ref" => obj!("type"="string","description"="Optional current @N snapshot ref selecting the owning frame; this is that element")
                 },
                 &["script"]),
             tool_def("browser_back",
