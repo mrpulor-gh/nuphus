@@ -1,0 +1,30 @@
+# Nuphus — 本地优先面向个人用户日常编程、办公、自动化工作流的 AI 协作伙伴
+
+> 一个本地优先的桌面 AI Agent 应用，能识别屏幕、操作键鼠与浏览器，把 LLM 推理转化为可重复执行的工作流，手机在同一局域网内作为第二屏幕。
+
+基于 Tauri v2、Rust、React 18 与 TypeScript，支持 Windows / macOS / Linux，可用 npm 一键安装并输入 nuphus 启动。核心包括 Leader 串行决策与并行调度外部 Agent、 Workflow 编译执行、本地 OCR 与语义搜索、双端同步，数据与模型配置均由用户本机掌控。
+
+## Docs
+
+- [Nuphus — 本地优先面向个人用户日常编程、办公、自动化工作流的 AI 协作伙伴](https://raw.githubusercontent.com/mrpulor-gh/nuphus/main/README.md): Nuphus 产品介绍：本地优先的 AI Agent，核心引擎、设计哲学、主要能力与版本、平台信息。
+- [设计哲学](https://github.com/mrpulor-gh/nuphus/blob/main/README.md#设计哲学): 极简实用主义理念，Leader 引擎串行思考并行执行，Workflow 把一次探索固化为确定性执行。
+- [核心亮点](https://github.com/mrpulor-gh/nuphus/blob/main/README.md#核心亮点): 真实桌面执行力、双端实时同步、本地隐私保护、内置工具页与安全体系等能力说明。
+- [安装](https://github.com/mrpulor-gh/nuphus/blob/main/README.md#安装): Npm 一键安装、各平台安装包下载地址，以及开发者从源码构建的前置条件。
+- [快速开始](https://github.com/mrpulor-gh/nuphus/blob/main/README.md#快速开始): 模型配置步骤、ChatGPT 套餐授权接入方式、API Key 加密存储与安全说明。
+- [架构概览](https://github.com/mrpulor-gh/nuphus/blob/main/README.md#架构概览): 六层架构与双端同步架构：同一 Agent 双界面、数据流、断线重连与消息补齐机制。
+- [设计原则](https://github.com/mrpulor-gh/nuphus/blob/main/README.md#设计原则): 本地优先、极简、确定性优先等六项设计原则的说明。
+- [如何贡献](https://github.com/mrpulor-gh/nuphus/blob/main/README.md#如何贡献): 通过贡献插件、GitHub Issues 与 Discussions 等方式参与社区生态建设。
+- [致谢](https://github.com/mrpulor-gh/nuphus/blob/main/README.md#致谢): 各版本提交 Pull Request 的社区贡献者名单与致谢记录。
+- [Privacy Policy](https://raw.githubusercontent.com/mrpulor-gh/nuphus/main/PRIVACY.md): 数据保留在本机的范围、发送给 AI 提供商的内容类型及第三方服务说明。
+
+## Examples
+
+- [Agent 问答台（样板插件）](https://raw.githubusercontent.com/mrpulor-gh/nuphus/main/examples/agent-chat/README.md): 以 agent.chat 调用 Agent 的完整插件样例，含打包、安装与宿主页验证步骤。
+- [Hello Nuphus 样板插件](https://raw.githubusercontent.com/mrpulor-gh/nuphus/main/examples/hello-plugin/README.md): 包含主题色卡、KV 计数器与 Toast 的最小插件示例及打包安装说明。
+- [nuphus-tour-v4 — 面板巡览工作流示例](https://raw.githubusercontent.com/mrpulor-gh/nuphus/main/examples/workflows/nuphus-tour-v4/README.md): 通过 Ctrl+K 命令面板依次巡览 11 个设置面板的桌面自动化工作流示例，含关键设计与已知行为。
+- [nuphus-tour-v4 使用指南](https://raw.githubusercontent.com/mrpulor-gh/nuphus/main/examples/workflows/nuphus-tour-v4/guide.md): Nuphus-tour-v4 的功能、前置条件、搜索词与关闭点规则、设计决策及故障排查步骤。
+
+## Optional
+
+- [Changelog](https://raw.githubusercontent.com/mrpulor-gh/nuphus/main/CHANGELOG.md): 按 Keep a Changelog 与语义化版本记录的各版本新增、变更与修复内容。
+- [Contributing to Nuphus](https://raw.githubusercontent.com/mrpulor-gh/nuphus/main/CONTRIBUTING.md): 开发环境要求、项目结构、构建检查命令、提交信息规范与 PR 流程及本地验证纪律。
