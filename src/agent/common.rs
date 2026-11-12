@@ -393,8 +393,8 @@ pub(crate) fn contains_status_code(err: &str, code: &str) -> bool {
     err.match_indices(code).any(|(idx, _)| {
         let before = err[..idx].chars().next_back();
         let after = err[idx + code.len()..].chars().next();
-        before.map_or(true, |c| !c.is_ascii_alphanumeric())
-            && after.map_or(true, |c| !c.is_ascii_alphanumeric())
+        before.is_none_or(|c| !c.is_ascii_alphanumeric())
+            && after.is_none_or(|c| !c.is_ascii_alphanumeric())
     })
 }
 
