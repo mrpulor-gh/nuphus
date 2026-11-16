@@ -1826,19 +1826,9 @@ pub(crate) fn resolve_effort_tiers(
     (Vec::new(), toml_default.map(String::from))
 }
 
-#[tauri::command(async)]
-pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::ModelInfo>, String> {
-    use nuphus::config::ModelRegistry;
-
-    let registry = if let Some(path) = get_config_path() {
-        tracing::info!("loading config from: {}", path.display());
-        ModelRegistry::from_toml(path.to_str().unwrap_or("config.toml"))
-            .map_err(|e| format!("load config failed: {}", e))?
-    } else {
-        tracing::info!("no config file found, falling back to environment variables");
-        ModelRegistry::from_env().map_err(|e| format!("load from env failed: {}", e))?
-    };
-
+/// 将 ModelRegistry 投影为前端 ModelInfo 列表（桌面 list_models 与移动端
+/// /model-config 共用；任何能力/成本/上下文窗口兜底只在这里实现一次）。
+pub fn project_models(registry: &nuphus::config::ModelRegistry) -> Vec<nuphus::api::ModelInfo> {
     let mut models = Vec::new();
     let builtin = nuphus::config::registry::ProviderRegistry::builtin();
     for provider in &registry.providers {
@@ -1910,8 +1900,28 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
             });
         }
     }
+    models
+}
 
-    Ok(models)
+/// 桌面 list_models 的实现体：移动端复用同一配置读取路径（config.toml →
+/// 环境变量兜底），避免两端各写一套 registry 加载。
+pub fn list_models_inner() -> Result<Vec<nuphus::api::ModelInfo>, String> {
+    use nuphus::config::ModelRegistry;
+
+    let registry = if let Some(path) = get_config_path() {
+        tracing::info!("loading config from: {}", path.display());
+        ModelRegistry::from_toml(path.to_str().unwrap_or("config.toml"))
+            .map_err(|e| format!("load config failed: {}", e))?
+    } else {
+        tracing::info!("no config file found, falling back to environment variables");
+        ModelRegistry::from_env().map_err(|e| format!("load from env failed: {}", e))?
+    };
+    Ok(project_models(&registry))
+}
+
+#[tauri::command(async)]
+pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::ModelInfo>, String> {
+    list_models_inner()
 }
 
 /// 手动添加单模型到服务商配置（config.toml `[[providers]].models`）。
@@ -2001,9 +2011,11 @@ pub fn get_reasoning_effort(
 /// Persist a reasoning-effort value for a provider into config.toml and update
 /// the in-memory LlamaConfig so the next client build picks it up.
 /// `effort: null` or empty clears the setting (provider default).
-#[tauri::command(async)]
-pub fn set_reasoning_effort(
-    state: State<'_, AppState>,
+///
+/// 实现体抽成 `set_reasoning_effort_inner`：桌面 IPC 与移动端 HTTP 共用同一
+/// 写入口（config.toml + runtime 同步），避免两端各写一份产生偏差。
+pub fn set_reasoning_effort_inner(
+    state: &AppState,
     provider: String,
     effort: Option<String>,
 ) -> Result<String, String> {
@@ -2021,6 +2033,15 @@ pub fn set_reasoning_effort(
         Some(e) if !e.is_empty() => Ok(format!("reasoning_effort set to {} for {}", e, provider)),
         _ => Ok(format!("reasoning_effort cleared for {}", provider)),
     }
+}
+
+#[tauri::command(async)]
+pub fn set_reasoning_effort(
+    state: State<'_, AppState>,
+    provider: String,
+    effort: Option<String>,
+) -> Result<String, String> {
+    set_reasoning_effort_inner(&state, provider, effort)
 }
 
 #[tauri::command]

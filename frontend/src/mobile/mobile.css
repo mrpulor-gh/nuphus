@@ -23,8 +23,14 @@
   --m-surface: #f2f2f7;
   --m-fg: #1c1c1e;
   --m-fg-secondary: #6d6d72;
+  --m-fg-tertiary: #8e8e93;
+  --m-fg-muted: #8a8a8e;
   --m-separator: rgba(60, 60, 67, 0.12);
+  --m-separator-strong: rgba(60, 60, 67, 0.28);
+  --m-border: rgba(60, 60, 67, 0.18);
+  --m-line: rgba(60, 60, 67, 0.18);
   --m-fill: rgba(120, 120, 128, 0.16);
+  --m-fill-strong: rgba(120, 120, 128, 0.24);
   /* 主操作按钮（黑底白字，黑白主题统一） */
   --m-btn-bg: #1c1c1e;
   --m-btn-bg-pressed: #000000;
@@ -38,6 +44,7 @@
   /* 「+」弹窗反色 token：亮色主题下弹窗用酷炫黑（与窗口浅色背景强区分） */
   --m-plus-bg: #1c1c21;
   --m-plus-fg: #e4e4e7;
+  --m-plus-fg-primary: #f4f4f5;
   --m-plus-fg-secondary: #a1a1aa;
   --m-plus-fill: rgba(255, 255, 255, 0.1);
   --m-plus-separator: rgba(255, 255, 255, 0.16);
@@ -67,6 +74,7 @@
   --m-font:
     -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, 'Microsoft YaHei',
     'Noto Sans SC', sans-serif;
+  --m-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
   /* 圆角（嵌套递减：气泡 18 → 卡片 12 → sm 8 → pill 全圆） */
   --m-radius-sm: 8px;
   --m-radius-bubble: 18px;
@@ -104,8 +112,14 @@
      粗体/细体可分辨（2026-09-02 大王反馈「白色太亮无层次」） */
   --m-fg: #c9c9cf;
   --m-fg-secondary: #a1a1aa;
+  --m-fg-tertiary: #7d7d85;
+  --m-fg-muted: #8b919c;
   --m-separator: rgba(255, 255, 255, 0.1);
+  --m-separator-strong: rgba(255, 255, 255, 0.22);
+  --m-border: #2a2e38;
+  --m-line: rgba(255, 255, 255, 0.12);
   --m-fill: rgba(255, 255, 255, 0.12);
+  --m-fill-strong: rgba(255, 255, 255, 0.2);
   /* 主操作按钮（酷炫黑：黑底白字） */
   --m-btn-bg: #1c1c21;
   --m-btn-bg-pressed: #000000;
@@ -119,6 +133,7 @@
   /* 「+」弹窗反色 token：深色主题下弹窗用简白（与窗口深色背景强区分） */
   --m-plus-bg: #ffffff;
   --m-plus-fg: #1c1c1e;
+  --m-plus-fg-primary: #1c1c1e;
   --m-plus-fg-secondary: #6d6d72;
   --m-plus-fill: rgba(0, 0, 0, 0.07);
   --m-plus-separator: rgba(60, 60, 67, 0.18);
@@ -1476,6 +1491,107 @@ body {
   border: 0.5px solid var(--m-separator);
 }
 
+/* 一轮执行元数据条（共享 <TurnMetaBar> 的移动端视觉）
+   桌面 chat-messages.css 不会随移动端加载，这里补齐同一组件的 class 契约。
+   纯只读信息：标签 UI 字族、数值等宽；不引入 hover/点击反馈。 */
+.mobile-msg .turn-meta-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 2px 0;
+}
+
+.mobile-msg .turn-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+  font-family: var(--m-font);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.mobile-msg .turn-meta-chip-label {
+  margin-right: 1px;
+}
+
+.mobile-msg .turn-meta-chip-value {
+  color: var(--m-fg);
+  font-family: var(--m-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 执行中双竖均衡器（与桌面同源：1.1s、右条 -0.55s、底端原点） */
+.mobile-msg .turn-meta-thinking {
+  flex-shrink: 0;
+  margin-right: 3px;
+  color: var(--m-fg-secondary);
+  overflow: visible;
+}
+
+.mobile-msg .turn-meta-thinking-bar-l,
+.mobile-msg .turn-meta-thinking-bar-r {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: mobile-turn-meta-eq 1.1s ease-in-out infinite;
+}
+
+.mobile-msg .turn-meta-thinking-bar-r {
+  animation-delay: -0.55s;
+}
+
+@keyframes mobile-turn-meta-eq {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-msg .turn-meta-thinking-bar-l,
+  .mobile-msg .turn-meta-thinking-bar-r {
+    animation: none;
+  }
+  .mobile-msg .turn-meta-thinking-bar-l {
+    transform: scaleY(0.62);
+  }
+  .mobile-msg .turn-meta-thinking-bar-r {
+    transform: scaleY(0.92);
+  }
+}
+
+/* 长工具执行 >60s 的提示 chip：流光文字（无渐变动画降级为普通次级色） */
+.mobile-msg .turn-meta-chip--patience {
+  display: inline-block;
+  background: linear-gradient(90deg, var(--m-fg-secondary), var(--m-fg), var(--m-fg-secondary));
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: mobile-turn-meta-shimmer 2s linear infinite;
+}
+
+@keyframes mobile-turn-meta-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-msg .turn-meta-chip--patience {
+    animation: none;
+    -webkit-text-fill-color: var(--m-fg-secondary);
+  }
+}
+
 /* 流式呼吸光标 */
 .mobile-msg-cursor {
   display: inline-block;
@@ -1769,7 +1885,8 @@ body {
   margin-bottom: 8px;
 }
 
-.mobile-empty-desc {
+.mobile-empty-desc,
+.mobile-empty-sub {
   font-size: 13px;
   line-height: 1.5;
   color: var(--m-fg-secondary);
@@ -2529,6 +2646,117 @@ body {
 .mobile-msg-final .m-md-li {
   margin: 4px 0;
   line-height: 1.55;
+}
+
+/* 列表/任务项统一 flex：手写 marker 与正文两列，长文本不撑破气泡 */
+.mobile-msg .m-md-li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mobile-msg .m-md-li > .m-md-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-msg .m-md-marker {
+  flex-shrink: 0;
+  min-width: 1.1em;
+  color: var(--m-fg-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-msg .m-md-marker-ol {
+  text-align: right;
+}
+
+.mobile-msg .m-md-task-item {
+  list-style: none;
+}
+
+.mobile-msg .m-md-task-checkbox {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  border: 1.5px solid var(--m-fg-secondary);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--m-fg-secondary);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.mobile-msg .m-md-task-checkbox.checked {
+  background: var(--m-btn-bg);
+  border-color: var(--m-btn-bg);
+  color: var(--m-btn-fg);
+}
+
+.mobile-msg .m-md-task-done {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+/* 行内代码：与桌面 markdown.css 同款语义（等宽 + 弱底 + hairline） */
+.mobile-msg .inline-code {
+  padding: 1px 6px;
+  border: 0.5px solid var(--m-separator);
+  border-radius: 5px;
+  background: var(--m-fill);
+  color: var(--m-fg);
+  font-family: var(--m-font-mono);
+  font-size: 0.88em;
+  font-weight: 500;
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+}
+
+/* user 气泡为反色底：行内代码/列表标记跟随反色前景 */
+.mobile-msg-user .mobile-msg-bubble .inline-code {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-marker {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-task-checkbox {
+  border-color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.mobile-msg-user .mobile-msg-bubble .m-md-task-checkbox.checked {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #1c1c1e;
+}
+
+:root[data-theme='dark'] .mobile-msg-user .mobile-msg-bubble .inline-code {
+  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.07);
+  color: #1c1c1e;
+}
+
+:root[data-theme='dark'] .mobile-msg-user .mobile-msg-bubble .m-md-marker {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme='dark'] .mobile-msg-user .mobile-msg-bubble .m-md-task-checkbox {
+  border-color: rgba(0, 0, 0, 0.5);
+  color: rgba(0, 0, 0, 0.7);
+}
+
+:root[data-theme='dark'] .mobile-msg-user .mobile-msg-bubble .m-md-task-checkbox.checked {
+  background: #1c1c1e;
+  border-color: #1c1c1e;
+  color: #ffffff;
 }
 
 .mobile-msg-final .m-md-code-block {
@@ -3997,7 +4225,7 @@ body {
 .mobile-settings-sub-item svg {
   margin-left: auto;
   flex-shrink: 0;
-  color: var(--m-accent);
+  color: var(--m-fg);
 }
 
 .mobile-settings-sub-name {
@@ -4088,6 +4316,171 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* ── 模型搜索 ── */
+.mobile-model-search {
+  width: 100%;
+  min-height: 40px;
+  margin: 2px 0 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--m-separator);
+  border-radius: 10px;
+  background: var(--m-fill);
+  color: var(--m-fg);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.mobile-model-search::placeholder {
+  color: var(--m-fg-secondary);
+}
+
+.mobile-model-search:focus {
+  border-color: var(--m-fg-secondary);
+}
+
+/* ── 模型行：名称 + 元数据（ctx / 能力 / effort）── */
+.mobile-model-item {
+  align-items: flex-start;
+}
+
+.mobile-model-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-model-item-name {
+  font-size: 14px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-model-item-id {
+  font-family: var(--m-font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--m-fg-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-model-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-model-tag {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--m-fill);
+  color: var(--m-fg-secondary);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.mobile-model-item .mobile-model-ctx {
+  font-family: var(--m-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-model-search-empty {
+  padding: 14px 10px;
+  font-size: 13px;
+  color: var(--m-fg-secondary);
+  text-align: center;
+}
+
+/* ── 推理强度选择（按 provider 持久化，与桌面端同一 config.toml 字段）── */
+.mobile-model-effort {
+  margin: 4px 0 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--m-fill);
+}
+
+.mobile-model-effort-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mobile-model-effort-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mobile-model-effort-sub {
+  font-size: 11px;
+  color: var(--m-fg-secondary);
+  text-align: right;
+}
+
+.mobile-model-effort-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.mobile-model-effort-option {
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 0.5px solid var(--m-separator);
+  border-radius: var(--m-radius-pill);
+  background: var(--m-bg);
+  color: var(--m-fg-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.mobile-model-effort-option:active {
+  opacity: 0.8;
+}
+
+.mobile-model-effort-option.is-active {
+  background: var(--m-btn-bg);
+  border-color: var(--m-btn-bg);
+  color: var(--m-btn-fg);
+}
+
+.mobile-model-effort-note {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--m-fg-secondary);
+}
+
+.mobile-model-error {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--m-red-bg);
+  color: var(--m-red);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 /* ── 子视图底部操作栏：返回（ghost）+ 确定（主按钮）——固定在抽屉底部，不随内容跳动 ── */

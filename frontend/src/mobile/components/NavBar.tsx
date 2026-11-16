@@ -28,10 +28,12 @@ import { getFontSize, setFontSize, type MobileFontSize } from '../fontsize'
 import {
   fetchCustomAgents,
   fetchModelConfig,
+  setMobileReasoningEffort,
   switchMobileMode,
   switchMobileModel,
   type CustomAgentBrief,
   type ModelConfig,
+  type ModelInfo,
   type ShelfSessions,
 } from '../api'
 import type { ActivityState } from '../store'
@@ -251,31 +253,108 @@ export default function NavBar({
    *  并初始化暂存为当前生效模型（先选后确定），手风琴默认展开当前模型所在提供商组 */
   const openModelView = () => {
     setSettingsView('model')
-    const cur = modelConfig?.models?.find(m => m.id === modelConfig.current)
+    setModelSearch('')
+    setModelError(null)
+    setEffortTouched(false)
+    modelDirtyRef.current = false
+    const cur = findCurrentModel(modelConfig)
     setPendingModel(cur ? { id: cur.id, provider: cur.provider } : null)
+    setPendingEffort(
+      cur
+        ? (modelConfig?.providerEfforts?.[cur.provider] ?? modelConfig?.reasoningEffort ?? null)
+        : null,
+    )
     setExpandedProvider(cur?.provider ?? null)
-    if (!modelConfig) {
-      setModelLoading(true)
-      fetchModelConfig(token, currentMode)
-        .then(cfg => {
-          setModelConfig(cfg)
-          const c = cfg.models?.find(m => m.id === cfg.current)
-          setExpandedProvider(prev => prev ?? c?.provider ?? null)
-        })
-        .catch(() => setModelConfig(null))
-        .finally(() => setModelLoading(false))
-    }
+    // 每次进入都重新拉取（桌面端可能刚改过配置/模型列表）；旧数据先展示，
+    // 返回后无用户操作才用最新配置覆盖暂存。
+    if (!modelConfig) setModelLoading(true)
+    const seq = ++modelFetchSeqRef.current
+    fetchModelConfig(token, currentMode)
+      .then(cfg => {
+        if (seq !== modelFetchSeqRef.current) return
+        setModelConfig(cfg)
+        if (modelDirtyRef.current) return
+        const c = findCurrentModel(cfg)
+        setExpandedProvider(c?.provider ?? null)
+        setPendingModel(c ? { id: c.id, provider: c.provider } : null)
+        setPendingEffort(
+          c ? (cfg.providerEfforts?.[c.provider] ?? cfg.reasoningEffort ?? null) : null,
+        )
+      })
+      .catch(() => {
+        if (seq !== modelFetchSeqRef.current) return
+        if (!modelConfig) setModelConfig(null)
+        setModelError('模型配置读取失败，请重试')
+      })
+      .finally(() => setModelLoading(false))
   }
 
-  /** 模型切换：provider-driven（后端读 config.toml），成功后回主列表并刷新配置 */
-  const switchToModel = async (id: string, provider: string) => {
+  /** 当前生效模型匹配：同名模型可能跨 provider，优先用 currentProvider 精确匹配 */
+  function findCurrentModel(cfg: ModelConfig | null): ModelInfo | undefined {
+    if (!cfg) return undefined
+    return cfg.models?.find(
+      m => m.id === cfg.current && (!cfg.currentProvider || m.provider === cfg.currentProvider),
+    )
+  }
+
+  /** 选择暂存模型：跨 provider 时同步该 provider 的已持久化强度（未修改则不覆盖） */
+  const choosePendingModel = (m: ModelInfo) => {
+    setModelError(null)
+    modelDirtyRef.current = true
+    if (pendingModel?.provider !== m.provider) {
+      setPendingEffort(modelConfig?.providerEfforts?.[m.provider] ?? null)
+      setEffortTouched(false)
+    }
+    setPendingModel({ id: m.id, provider: m.provider })
+  }
+
+  /** 模型切换：provider-driven（后端读 config.toml），成功后回主列表并刷新配置。
+   *  先切模型再写 effort：模型切换失败时不会留下半套 effort 状态。 */
+  const switchToModel = async (
+    id: string,
+    provider: string,
+    effort: string | null,
+    saveEffort: boolean,
+  ) => {
+    if (modelSaving) return
+    const seq = ++modelFetchSeqRef.current
+    setModelSaving(true)
+    setModelError(null)
+    let switched = false
     try {
-      await switchMobileModel(token, id, provider, currentMode)
+      const sameModel =
+        modelConfig?.current === id &&
+        (!modelConfig?.currentProvider || modelConfig.currentProvider === provider)
+      if (!sameModel) {
+        await switchMobileModel(token, id, provider, currentMode)
+        switched = true
+      }
+      if (saveEffort) {
+        await setMobileReasoningEffort(token, provider, effort)
+      }
       const cfg = await fetchModelConfig(token, currentMode)
+      if (seq !== modelFetchSeqRef.current) return
       setModelConfig(cfg)
       setSettingsView('main')
-    } catch {
-      /* toast 由上层反馈（模型行点击后可见状态） */
+      setPendingModel(null)
+      setEffortTouched(false)
+      setModelSearch('')
+      modelDirtyRef.current = false
+    } catch (e) {
+      if (seq !== modelFetchSeqRef.current) return
+      // 模型切换已成功、仅 effort 写入失败：仍刷新配置让卡片反映真实模型，
+      // 错误留在 sheet 内供重试（不把「切了但强度没保存」伪装成完全失败）。
+      if (switched) {
+        try {
+          const cfg = await fetchModelConfig(token, currentMode)
+          if (seq === modelFetchSeqRef.current) setModelConfig(cfg)
+        } catch {
+          /* 保留原配置，错误提示已足够 */
+        }
+      }
+      setModelError(e instanceof Error ? e.message : '切换失败，请重试')
+    } finally {
+      setModelSaving(false)
     }
   }
   // 设置抽屉（点击 logo 直接侧滑）——单面板 + 视图切换：
@@ -364,24 +443,46 @@ export default function NavBar({
   // 模型子视图：当前展开的提供商组（手风琴——同一时刻只展开一组；null=全部收起）
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null)
 
+  // 模型搜索：非空时平铺展示匹配结果（分组在搜索态下不再有意义）
+  const [modelSearch, setModelSearch] = useState('')
+
+  // 推理强度暂存：pendingEffort=null 表示 provider 默认；effortTouched 区分
+  // 「用户主动改过」与「仅切换 provider」——后者不覆盖目标 provider 的已有配置。
+  const [pendingEffort, setPendingEffort] = useState<string | null>(null)
+  const [effortTouched, setEffortTouched] = useState(false)
+  const [modelSaving, setModelSaving] = useState(false)
+  const [modelError, setModelError] = useState<string | null>(null)
+  /** 用户在模型视图内是否已操作过（拉取返回后不覆盖其选择） */
+  const modelDirtyRef = useRef(false)
+  /** 模型配置请求序号：慢链路下先发后至的响应不得覆盖新选择/新配置 */
+  const modelFetchSeqRef = useRef(0)
+
   /** 关闭抽屉：统一重置回主列表（避免下次打开停留在子视图） */
   const closeSettings = () => {
     setSettingsView('main')
     setSheetClosing(false)
     setSheetDragX(0)
     setSettingsOpen(false)
+    setModelSearch('')
+    setModelError(null)
+    setEffortTouched(false)
+    modelDirtyRef.current = false
   }
 
   /** 返回主视图（header ← / 底部「返回」共用）：放弃子视图未确认的暂存选择 */
   const backToMain = () => {
     setPendingModel(null)
+    setModelSearch('')
+    setModelError(null)
+    setEffortTouched(false)
+    modelDirtyRef.current = false
     setSettingsView('main')
   }
 
   /** 子视图底部「确定」：按视图提交暂存选择（模型走后端权威入口） */
   const confirmView = () => {
     if (settingsView === 'model' && pendingModel) {
-      void switchToModel(pendingModel.id, pendingModel.provider)
+      void switchToModel(pendingModel.id, pendingModel.provider, pendingEffort, effortTouched)
     }
   }
 
@@ -472,6 +573,8 @@ export default function NavBar({
       ? (tokenUsage.cacheHitTokens / cacheTotal) * 100
       : -1
   const cacheColor = cacheRate > 60 ? '#22c55e' : cacheRate > 30 ? '#f59e0b' : '#ef4444'
+  // 当前生效模型元数据（用于只在支持 reasoning effort 时展示强度）
+  const currentModelInfo = findCurrentModel(modelConfig)
   // step（工具调用步数）= 当前执行累计工具调用（tool_call_start 事件累积）；
   // time（执行用时）= 优先后端权威起点 metaStartedAtMs（刷新/重连不归零），
   // 旧后端缺省时退化为前端 startedAt；暂停冻结在 pausedAt。
@@ -495,6 +598,91 @@ export default function NavBar({
     [sessions],
   )
   const sessLimit = normalizeGroupLimit(sessions?.collapsed_limit ?? DEFAULT_GROUP_LIMIT)
+
+  // ── 模型子视图：搜索 / 元数据 / 推理强度（与桌面 list_models 同一投影）──
+  const modelSearchTerm = modelSearch.trim().toLowerCase()
+  const modelSearchResults = modelSearchTerm
+    ? (modelConfig?.models ?? []).filter(m =>
+        [m.id, m.provider, ...(m.alias ?? [])].some(v => v.toLowerCase().includes(modelSearchTerm)),
+      )
+    : []
+  const pendingModelInfo = pendingModel
+    ? modelConfig?.models.find(
+        m => m.id === pendingModel.id && m.provider === pendingModel.provider,
+      )
+    : undefined
+  // 已持久化值可能不在模型声明列表里（配置被手改/模型元数据变更）——并入选项，
+  // 保证当前值可见、可切回默认，而不是出现「没有任何选中项」。
+  const pendingEfforts = pendingModelInfo
+    ? Array.from(
+        new Set([
+          ...(pendingModelInfo.reasoning_efforts ?? []),
+          ...(pendingEffort ? [pendingEffort] : []),
+        ]),
+      )
+    : []
+
+  const modelMeta = (m: ModelInfo) => {
+    const meta: React.ReactNode[] = []
+    if (m.context_window && m.context_window > 0) {
+      meta.push(
+        <span key="ctx" className="mobile-model-ctx">
+          {formatTokens(m.context_window)} ctx
+        </span>,
+      )
+    }
+    if (m.supports_vision) {
+      meta.push(
+        <span key="vision" className="mobile-model-tag">
+          vision
+        </span>,
+      )
+    }
+    if (m.supports_audio) {
+      meta.push(
+        <span key="audio" className="mobile-model-tag">
+          audio
+        </span>,
+      )
+    }
+    if (m.supports_image_generation) {
+      meta.push(
+        <span key="image" className="mobile-model-tag">
+          image
+        </span>,
+      )
+    }
+    if ((m.reasoning_efforts?.length ?? 0) > 0) {
+      meta.push(
+        <span key="effort" className="mobile-model-tag">
+          effort
+        </span>,
+      )
+    }
+    return meta
+  }
+
+  const renderModelRow = (m: ModelInfo) => {
+    const selected = pendingModel?.id === m.id && pendingModel?.provider === m.provider
+    const meta = modelMeta(m)
+    return (
+      <button
+        key={`${m.provider}:${m.id}`}
+        type="button"
+        className={`mobile-settings-sub-item mobile-model-item${selected ? ' is-active' : ''}`}
+        onClick={() => choosePendingModel(m)}
+      >
+        <span className="mobile-model-item-main">
+          <span className="mobile-model-item-name">{m.alias?.[0] || m.id}</span>
+          {m.alias?.[0] && m.alias[0] !== m.id && (
+            <span className="mobile-model-item-id">{m.id}</span>
+          )}
+          {meta.length > 0 && <span className="mobile-model-item-meta">{meta}</span>}
+        </span>
+        {selected && <Check size={15} aria-hidden="true" />}
+      </button>
+    )
+  }
 
   const renderSettings = () =>
     settingsOpen ? (
@@ -693,6 +881,9 @@ export default function NavBar({
                     )}
                     <span>step {execSteps}</span>
                     <span>time {formatElapsed(execDuration)}</span>
+                    {currentModelInfo && currentModelInfo.reasoning_efforts.length > 0 && (
+                      <span>effort {modelConfig?.reasoningEffort || 'default'}</span>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -806,65 +997,132 @@ export default function NavBar({
               <div className="mobile-settings-sub-note">
                 模型与桌面端同源配置；选择后点「确定」生效
               </div>
+              {modelError && (
+                <div className="mobile-model-error" role="alert">
+                  {modelError}
+                </div>
+              )}
               {modelLoading && <div className="mobile-settings-sub-note">加载中…</div>}
               {!modelLoading && (!modelConfig?.models || modelConfig.models.length === 0) && (
                 <div className="mobile-settings-sub-note">暂无模型，请先在桌面端配置</div>
               )}
-              {!modelLoading &&
-                modelConfig &&
-                modelConfig.models.length > 0 &&
-                // 按 provider 分组（保持首次出现顺序）；手风琴——同一时刻只展开一组
-                [...new Map(modelConfig.models.map(m => [m.provider, m.provider])).keys()].map(
-                  provider => {
-                    const models = modelConfig.models.filter(m => m.provider === provider)
-                    const open = expandedProvider === provider
-                    return (
-                      <div key={provider} className="mobile-model-group">
+              {!modelLoading && modelConfig && modelConfig.models.length > 0 && (
+                <>
+                  <input
+                    className="mobile-model-search"
+                    type="search"
+                    value={modelSearch}
+                    onChange={e => setModelSearch(e.target.value)}
+                    placeholder="搜索模型 / 提供商"
+                    aria-label="搜索模型"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  {modelSearchTerm ? (
+                    modelSearchResults.length > 0 ? (
+                      <div className="mobile-model-group-body" role="group" aria-label="搜索结果">
+                        {modelSearchResults.map(m => renderModelRow(m))}
+                      </div>
+                    ) : (
+                      <div className="mobile-model-search-empty">没有匹配的模型</div>
+                    )
+                  ) : (
+                    // 按 provider 分组（保持首次出现顺序）；手风琴——同一时刻只展开一组
+                    [...new Map(modelConfig.models.map(m => [m.provider, m.provider])).keys()].map(
+                      provider => {
+                        const models = modelConfig.models.filter(m => m.provider === provider)
+                        const open = expandedProvider === provider
+                        return (
+                          <div key={provider} className="mobile-model-group">
+                            <button
+                              type="button"
+                              className={['mobile-model-group-head', open ? 'is-open' : '']
+                                .filter(Boolean)
+                                .join(' ')}
+                              onClick={() => setExpandedProvider(open ? null : provider)}
+                              aria-expanded={open}
+                            >
+                              <span className="mobile-model-group-name">
+                                {provider || '未分类'}
+                              </span>
+                              <span className="mobile-model-group-count">{models.length}</span>
+                              <ChevronDown
+                                size={15}
+                                className={['mobile-model-group-arrow', open ? 'is-open' : '']
+                                  .filter(Boolean)
+                                  .join(' ')}
+                                aria-hidden="true"
+                              />
+                            </button>
+                            {open && (
+                              <div
+                                className="mobile-model-group-body"
+                                role="group"
+                                aria-label={provider}
+                              >
+                                {models.map(m => renderModelRow(m))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      },
+                    )
+                  )}
+                  {pendingModelInfo && pendingModelInfo.reasoning_efforts.length > 0 && (
+                    <div className="mobile-model-effort">
+                      <div className="mobile-model-effort-head">
+                        <span className="mobile-model-effort-title">推理强度</span>
+                        <span className="mobile-model-effort-sub">
+                          {pendingModelInfo.alias?.[0] || pendingModelInfo.id}
+                        </span>
+                      </div>
+                      <div
+                        className="mobile-model-effort-options"
+                        role="radiogroup"
+                        aria-label="推理强度"
+                      >
                         <button
                           type="button"
-                          className={['mobile-model-group-head', open ? 'is-open' : '']
-                            .filter(Boolean)
-                            .join(' ')}
-                          onClick={() => setExpandedProvider(open ? null : provider)}
-                          aria-expanded={open}
+                          role="radio"
+                          aria-checked={pendingEffort == null}
+                          className={`mobile-model-effort-option${pendingEffort == null ? ' is-active' : ''}`}
+                          onClick={() => {
+                            setPendingEffort(null)
+                            setEffortTouched(true)
+                            modelDirtyRef.current = true
+                          }}
                         >
-                          <span className="mobile-model-group-name">{provider || '未分类'}</span>
-                          <span className="mobile-model-group-count">{models.length}</span>
-                          <ChevronDown
-                            size={15}
-                            className={['mobile-model-group-arrow', open ? 'is-open' : '']
-                              .filter(Boolean)
-                              .join(' ')}
-                            aria-hidden="true"
-                          />
+                          默认
                         </button>
-                        {open && (
-                          <div
-                            className="mobile-model-group-body"
-                            role="group"
-                            aria-label={provider}
+                        {pendingEfforts.map(e => (
+                          <button
+                            key={e}
+                            type="button"
+                            role="radio"
+                            aria-checked={pendingEffort === e}
+                            className={`mobile-model-effort-option${pendingEffort === e ? ' is-active' : ''}`}
+                            onClick={() => {
+                              setPendingEffort(e)
+                              setEffortTouched(true)
+                              modelDirtyRef.current = true
+                            }}
                           >
-                            {models.map(m => (
-                              <button
-                                key={m.id}
-                                type="button"
-                                className={`mobile-settings-sub-item${(pendingModel?.id ?? modelConfig.current) === m.id ? ' is-active' : ''}`}
-                                onClick={() => setPendingModel({ id: m.id, provider: m.provider })}
-                              >
-                                <span className="mobile-settings-sub-name">
-                                  {m.alias?.[0] || m.id}
-                                </span>
-                                {(pendingModel?.id ?? modelConfig.current) === m.id && (
-                                  <Check size={15} aria-hidden="true" />
-                                )}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                            {e}
+                          </button>
+                        ))}
                       </div>
-                    )
-                  },
-                )}
+                      <div className="mobile-model-effort-note">
+                        按服务商保存，影响之后发送的消息
+                      </div>
+                    </div>
+                  )}
+                  {pendingModelInfo && pendingModelInfo.reasoning_efforts.length === 0 && (
+                    <div className="mobile-settings-sub-note">
+                      该模型未声明推理强度，使用服务商默认。
+                    </div>
+                  )}
+                </>
+              )}
             </>
           )}
         </div>
@@ -881,10 +1139,10 @@ export default function NavBar({
             <button
               type="button"
               className="mobile-settings-footer-btn is-confirm"
-              disabled={settingsView === 'model' && !pendingModel}
+              disabled={(settingsView === 'model' && !pendingModel) || modelSaving}
               onClick={confirmView}
             >
-              确定
+              {modelSaving ? '保存中…' : '确定'}
             </button>
           </div>
         )}

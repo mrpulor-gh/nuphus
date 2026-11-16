@@ -2009,85 +2009,61 @@ async fn get_model_config<R: tauri::Runtime>(
     } else {
         ModelRegistry::from_env()
     };
-    let (current, models, context_window) = match registry {
-        Ok(registry) => {
-            let mut models = Vec::new();
-            let builtin = nuphus::config::registry::ProviderRegistry::builtin();
-            for provider in &registry.providers {
-                for model in &provider.models {
-                    // Reasoning-effort 与桌面端 list_models 同一兜底链：
-                    // 配置时持久化的 per-model 元数据 > builtin ModelDef > 空
-                    let reasoning_efforts = if !model.reasoning_efforts.is_empty() {
-                        model.reasoning_efforts.clone()
-                    } else {
-                        builtin
-                            .get(provider.provider_type.as_str())
-                            .and_then(|p| {
-                                p.models().iter().find(|m| m.id == model.id).map(|m| {
-                                    m.reasoning_efforts.iter().map(|s| s.to_string()).collect()
-                                })
-                            })
-                            .unwrap_or_default()
-                    };
-                    let default_effort = if model.default_effort.is_some() {
-                        model.default_effort.clone()
-                    } else {
-                        builtin.get(provider.provider_type.as_str()).and_then(|p| {
-                            p.models()
-                                .iter()
-                                .find(|m| m.id == model.id)
-                                .and_then(|m| m.default_effort.map(|s| s.to_string()))
-                        })
-                    };
-                    models.push(nuphus::api::ModelInfo {
-                        transport: model.transport,
-                        id: model.id.clone(),
-                        provider: provider.name.clone(),
-                        alias: model.alias.clone(),
-                        supports_streaming: model.supports_streaming,
-                        supports_vision: model.supports_vision,
-                        supports_audio: model.supports_audio,
-                        supports_image_generation: model.supports_image_generation,
-                        context_window: model.context_window.map(|c| c as u64).or_else(|| {
-                            builtin.get(provider.provider_type.as_str()).and_then(|p| {
-                                p.models()
-                                    .iter()
-                                    .find(|m| m.id == model.id)
-                                    .map(|m| m.context_window as u64)
-                            })
-                        }),
-                        reasoning_efforts,
-                        default_effort,
-                        cost_per_million_in: model.cost_per_million_in,
-                        cost_per_million_out: model.cost_per_million_out,
-                        source: model.source.as_str().to_string(),
-                    });
-                }
-            }
-            // 按当前 mode 解析生效模型（agent_models：leader/workflow/custom 各自模型，
-            // 空 = 跟随 default → leader → registry.model 锚点）。切换 mode 后模型卡
-            // 「当前模型」应跟随该 mode 的生效模型，而非全局 registry.model。
-            let (current_provider, current) =
-                crate::commands::config::llm::effective_model_binding(
-                    &state.llm_config_path,
-                    &registry,
-                    query.mode.as_deref().unwrap_or("leader"),
-                )
-                .unwrap_or_default();
-            // 当前模型上下文窗口（0 = 未知，不伪装默认值）：手机端上下文用量
-            // 百分比 = 会话累计 input_tokens / context_window；分母缺失时前端
-            // 隐藏百分比显示 "--"，而非用 128000 假数渲染。
-            let context_window = registry
-                .find_model_for_provider(&current_provider, &current)
-                .and_then(|(_, m)| m.context_window)
-                .unwrap_or(0);
-            (current, models, context_window)
+    let mut current = String::new();
+    let mut current_provider = String::new();
+    let mut models = Vec::new();
+    let mut context_window = 0u64;
+    let mut reasoning_effort: Option<String> = None;
+    let mut provider_efforts = serde_json::Map::new();
+    if let Ok(registry) = registry {
+        // 与桌面 list_models 共用同一投影：builtin / OpenRouter 聚合缓存 /
+        // reasoning efforts / cost 的兜底链只维护一份，移动端不再独立实现。
+        models = crate::commands::config::llm::project_models(&registry);
+        // 按当前 mode 解析生效模型（agent_models：leader/workflow/custom 各自模型，
+        // 空 = 跟随 default → leader → registry.model 锚点）。切换 mode 后模型卡
+        // 「当前模型」应跟随该 mode 的生效模型，而非全局 registry.model。
+        let (provider, model) = crate::commands::config::llm::effective_model_binding(
+            &state.llm_config_path,
+            &registry,
+            query.mode.as_deref().unwrap_or("leader"),
+        )
+        .unwrap_or_default();
+        current_provider = provider;
+        current = model;
+        // 当前模型上下文窗口：直接取同一 models 投影的条目（含 builtin /
+        // OpenRouter 兜底），与模型列表显示值严格一致。0 = 未知，不伪装默认值；
+        // 手机端百分比分母缺失时显示 "--"。
+        context_window = models
+            .iter()
+            .find(|m| m.provider == current_provider && m.id == current)
+            .and_then(|m| m.context_window)
+            .unwrap_or(0);
+        reasoning_effort = crate::commands::config::read_provider_reasoning_effort_from_config_toml(
+            &current_provider,
+        );
+        // provider → 已持久化 effort 映射：前端切换模型时能立即显示目标 provider
+        // 的真实强度，而不是把「默认」误当成未配置。
+        for provider in &registry.providers {
+            provider_efforts.insert(
+                provider.name.clone(),
+                serde_json::json!(
+                    crate::commands::config::read_provider_reasoning_effort_from_config_toml(
+                        &provider.name
+                    )
+                ),
+            );
         }
-        Err(_) => (String::new(), Vec::new(), 0),
-    };
+    }
     // 只回传模型标识与能力标记，绝不携带 api_key / base_url 等敏感字段
-    Json(serde_json::json!({ "current": current, "models": models, "contextWindow": context_window }))
-        .into_response()
+    Json(serde_json::json!({
+        "current": current,
+        "currentProvider": current_provider,
+        "models": models,
+        "contextWindow": context_window,
+        "reasoningEffort": reasoning_effort,
+        "providerEfforts": provider_efforts,
+    }))
+    .into_response()
 }
 
 /// POST /switch-model 请求体：切换当前模型（provider 必填；base_url/context_window 走桌面默认）
@@ -2129,6 +2105,55 @@ async fn post_switch_model<R: tauri::Runtime>(
         payload.mode.clone(),
     )
     .await
+    {
+        Ok(msg) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "ok": true, "message": msg })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /reasoning-effort 请求体：按 provider 持久化推理强度
+#[derive(Debug, Deserialize)]
+struct MobileReasoningEffort {
+    provider: String,
+    /// null / 空 = 清除覆盖，回到 provider 默认
+    effort: Option<String>,
+}
+
+/// POST /reasoning-effort — 手机端修改推理强度。
+/// 与桌面端 set_reasoning_effort 共用同一写入口：写 config.toml 的
+/// `[[providers]] reasoning_effort` 并同步 runtime，下一次消息立即生效。
+async fn post_reasoning_effort<R: tauri::Runtime>(
+    State(ctx): State<MobileCtx<R>>,
+    headers: HeaderMap,
+    Query(query): Query<AuthQuery>,
+    Json(payload): Json<MobileReasoningEffort>,
+) -> Response {
+    if !token_valid(&headers, &query, &ctx.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let provider = payload.provider.trim().to_string();
+    if provider.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": "provider 不能为空" })),
+        )
+            .into_response();
+    }
+    // 空白 effort 统一视为「清除覆盖」，避免写入空字符串脏值。
+    let effort = payload
+        .effort
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty());
+    let state = ctx.app.state::<AppState>();
+    match crate::commands::config::llm::set_reasoning_effort_inner(state.inner(), provider, effort)
     {
         Ok(msg) => (
             StatusCode::OK,
@@ -2354,6 +2379,7 @@ fn create_router<R: tauri::Runtime>(ctx: MobileCtx<R>) -> Router {
         .route("/new-chat", post(post_new_chat))
         .route("/model-config", get(get_model_config))
         .route("/switch-model", post(post_switch_model))
+        .route("/reasoning-effort", post(post_reasoning_effort))
         .route("/switch-mode", post(post_switch_mode))
         .route("/message", post(post_message))
         .route("/confirm", post(post_confirm))
@@ -3551,6 +3577,15 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(r.status(), 401);
+
+            // 新增推理强度端点同属写操作：无 token 必须在落盘前被拒。
+            let r = client
+                .post(format!("{base}/reasoning-effort"))
+                .json(&serde_json::json!({ "provider": "test", "effort": null }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 401, "/reasoning-effort 无 token 应 401");
         });
     }
 

@@ -308,9 +308,15 @@ export interface ModelInfo {
 /** GET /model-config 返回：桌面端模型配置（主模型 + 全部已配置模型，与 /models 页同源） */
 export interface ModelConfig {
   current: string
+  /** 当前生效模型所属 provider（同名模型跨 provider 时用于精确匹配） */
+  currentProvider?: string
   models: ModelInfo[]
-  /** 当前模型上下文窗口（token；旧后端无此字段时前端 fallback 128000） */
+  /** 当前模型上下文窗口（token；0/缺省 = 未知，前端显示 --） */
   contextWindow?: number
+  /** 当前 provider 已持久化的推理强度；null = provider 默认 */
+  reasoningEffort?: string | null
+  /** provider → 已持久化推理强度映射（切换模型时直接显示目标 provider 的真实值） */
+  providerEfforts?: Record<string, string | null>
 }
 
 /** 拉取桌面端模型配置（config.toml → ModelRegistry，与桌面端 /models 页同源）。
@@ -356,6 +362,29 @@ export async function switchMobileModel(
   if (!res.ok) throw new Error(`switch-model failed: ${res.status}`)
   const data = (await res.json()) as SwitchModelResult
   if (!data.ok) throw new Error(data.error || t('mobile.switchModelFailed'))
+}
+
+/** 设置当前 provider 的推理强度（config.toml `[[providers]] reasoning_effort`）。
+ *  effort=null 表示清除覆盖、回到 provider 默认；与桌面端同一持久化入口。 */
+export async function setMobileReasoningEffort(
+  token: string,
+  provider: string,
+  effort: string | null,
+): Promise<void> {
+  const res = await checkAuth(
+    await fetchWithTimeout(resolveApi('./reasoning-effort'), {
+      method: 'POST',
+      headers: {
+        'X-Mobile-Token': token,
+        'Content-Type': 'application/json',
+        ...tunnelDeviceHeaders(),
+      },
+      body: JSON.stringify({ provider, effort }),
+    }),
+  )
+  if (!res.ok) throw new Error(`reasoning-effort failed: ${res.status}`)
+  const data = (await res.json()) as SwitchModelResult
+  if (!data.ok) throw new Error(data.error || '切换推理强度失败')
 }
 
 /** 切换运行模式（leader/workflow/custom）——走后端 set_mode，广播 ModeChanged 双端同步。 */
