@@ -111,6 +111,25 @@ function formatElapsed(ms: number): string {
   return `${mm}:${ss}`
 }
 
+/** updated_at（Unix 毫秒）→ 行尾相对时间；与桌面 SessionRail.relativeTime 同文案同阈值 */
+function relativeTime(ms?: number): string {
+  if (!ms) return ''
+  const minutes = Math.floor((Date.now() - ms) / 60_000)
+  if (minutes < 1) return t('sessionRail.timeJustNow')
+  if (minutes < 60) return t('sessionRail.timeMinutes', String(minutes))
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return t('sessionRail.timeHours', String(hours))
+  return t('sessionRail.timeDays', String(Math.floor(hours / 24)))
+}
+
+/** mode → 单字母标识（与桌面 modeToLetter 同一语义：L / W / C） */
+function modeToLetter(mode: string): string {
+  if (mode === 'workflow') return 'W'
+  if (mode === 'leader') return 'L'
+  if (mode === 'custom') return 'C'
+  return '·'
+}
+
 /** Nuphus 眨眼 logo（与桌面端 NuphusAvatar 同款 SVG 结构）：
  *  框 = 颅，双竖 = 目（眨眼动画），右下开口 = 嘴。
  *  stroke=currentColor 跟随主题（.mobile-nav-logo color）
@@ -927,6 +946,12 @@ export default function NavBar({
                 执行中/后端守卫锁定时禁用。 */}
                   <div className="mobile-sess-section">
                     <div className="mobile-settings-group">{t('sessionRail.projectsTitle')}</div>
+                    {/* 执行中锁定：整表提示一次（旧实现每行重复「执行中锁定」，扫读噪声大） */}
+                    {sessLocked && (
+                      <div className="mobile-sess-locked" role="status">
+                        执行中，暂不可切换会话
+                      </div>
+                    )}
                     {sessGroups.length > 0 ? (
                       sessGroups.map(group => {
                         const collapsed = !!sessCollapsed[group.key]
@@ -937,7 +962,8 @@ export default function NavBar({
                         )
                         return (
                           <div className="mobile-sess-group" key={group.key || '__ungrouped__'}>
-                            {/* 组头：文件夹名 + 会话数；点击收起/展开整组 */}
+                            {/* 组头：chevron + 文件夹名（flex）+ 会话数；点击收起/展开整组。
+                                chevron 放左侧，与桌面会话工作台组头同序（先箭头后名称） */}
                             <button
                               type="button"
                               className="mobile-sess-group-head"
@@ -946,6 +972,9 @@ export default function NavBar({
                               }
                               aria-expanded={!collapsed}
                             >
+                              <span className="mobile-sess-group-chevron" aria-hidden="true">
+                                {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                              </span>
                               <span
                                 className={`mobile-sess-group-name${
                                   group.path === null ? ' is-ungrouped' : ''
@@ -956,11 +985,6 @@ export default function NavBar({
                               <span className="mobile-sess-group-count">
                                 {group.sessions.length}
                               </span>
-                              {collapsed ? (
-                                <ChevronRight size={14} aria-hidden="true" />
-                              ) : (
-                                <ChevronDown size={14} aria-hidden="true" />
-                              )}
                             </button>
                             {!collapsed &&
                               (group.sessions.length > 0 ? (
@@ -983,23 +1007,24 @@ export default function NavBar({
                                           onPageChange('chat')
                                         }}
                                       >
+                                        {item.mode && (
+                                          <span
+                                            className={`mobile-sess-mode mode-${item.mode}`}
+                                            aria-hidden="true"
+                                          >
+                                            {modeToLetter(item.mode)}
+                                          </span>
+                                        )}
                                         <span className="mobile-sess-title">
-                                          {item.mode && (
-                                            <span
-                                              className={`mobile-sess-mode mode-${item.mode}`}
-                                              aria-hidden="true"
-                                            >
-                                              {item.mode.toUpperCase()}
-                                            </span>
-                                          )}
-                                          {item.title || item.id}
+                                          {item.title || t('sessionRail.untitled')}
                                         </span>
-                                        <span className="mobile-sess-meta">
-                                          {item.is_active ? '当前 · ' : ''}
-                                          {activity.running && !item.is_active
-                                            ? '执行中锁定 · '
-                                            : ''}
-                                          {item.message_count} 条
+                                        {item.is_active && (
+                                          <span className="mobile-sess-current">
+                                            {t('sessionRail.current')}
+                                          </span>
+                                        )}
+                                        <span className="mobile-sess-time">
+                                          {relativeTime(item.updated_at)}
                                         </span>
                                       </button>
                                     ))}

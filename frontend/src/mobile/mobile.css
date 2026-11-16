@@ -3491,60 +3491,58 @@ body {
 
 /* ── 会话清单（桌面展示台镜像，设置抽屉主视图直显）────────────────── */
 /* 会话分区与模型卡拉开距离（模型卡 foot 下方紧贴，需视觉分区） */
+/* ── 会话列表：对齐桌面会话工作台（SessionRail）的「行」版式 ──
+   桌面版式 = 无边框单行 + mode 单字母方块 + 标题 + 行尾相对时间；
+   当前会话用淡色底，不用反色胶囊（反色块在深色主题下过跳、且与「仅状态」语义不符）。
+   移动端差异：行高 44pt（触达）、方块 16px（触屏可辨）、组头计数右对齐。 */
+
 .mobile-sess-section {
-  margin-top: 24px;
+  margin-top: 20px;
+}
+
+/* 执行中锁定：整表只提示一次，不逐行重复（旧实现每行拼「执行中锁定 ·」） */
+.mobile-sess-locked {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--m-fill);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--m-fg-secondary);
 }
 
 .mobile-sess-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  /* 高度自适应：抽屉（.mobile-settings-body）是唯一滚动区，
-     列表不再自设 max-height/overflow（旧弹层遗产，会截断成内嵌滚动）。
-     右侧 padding 预留滚动条空间——滚动条占位时不遮挡/拦截列表内容 */
-  margin-top: 10px;
-  padding-right: 6px;
+  gap: 2px;
+  /* 组内左缩进：表达「会话从属于文件夹」（同桌面 .sr-group-body padding-left 6px） */
+  padding-left: 2px;
 }
 
 .mobile-sess-item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 9px 14px 9px 12px;
-  border: 0.5px solid var(--m-separator);
+  min-height: 44px;
+  padding: 8px 10px;
+  border: none;
   border-radius: 10px;
   background: transparent;
-  color: var(--m-plus-fg-primary, inherit);
+  color: var(--m-fg);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition:
-    background 120ms ease-out,
-    border-color 120ms ease-out;
+  transition: background 120ms ease-out;
 }
 
 .mobile-sess-item:active {
-  background: rgba(127, 127, 127, 0.12);
+  background: var(--m-fill);
 }
 
-/* 当前会话：反色胶囊底（亮=酷炫黑 / 深=简白）+ 主题色描边（已在看，无需切换）。
-   文字整体取胶囊前景保证 meta 可读；标题再用主题色 --m-accent
-   （亮=白 / 深=黑，与反色底天然强对比） */
+/* 当前会话：淡色底即可（不再加粗标题——底色 + 徽标已双重标注，三重强调会压过组头） */
 .mobile-sess-item.is-active {
-  background: var(--m-wf-pill-bg);
-  color: var(--m-wf-pill-fg);
-}
-
-.mobile-sess-item.is-active .mobile-sess-title {
-  color: var(--m-accent);
-}
-
-/* 点选待确认（先选后确定）：前景描边 + 浅填充，与「当前会话」反色底明确区分 */
-.mobile-sess-item.is-selected {
-  border-color: var(--m-fg);
   background: var(--m-fill);
 }
 
@@ -3554,90 +3552,116 @@ body {
   cursor: default;
 }
 
-.mobile-sess-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 100%;
-  font-size: 13.5px;
-  font-weight: 600;
-  line-height: 1.4;
-  /* 超长标题允许换行（不再单行省略——mode 铭牌 + 文本自然折行） */
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-/* 会话 mode 铭牌：与桌面 rail 同源配色（leader 蓝 / workflow 橙 / custom 紫） */
+/* mode 单字母方块：中性色、去色相（与桌面 .sr-mode-badge 一致；
+   旧实现 leader 蓝 / workflow 橙 / custom 紫三色胶囊，与「克制灰」主线冲突） */
 .mobile-sess-mode {
   flex: none;
   display: inline-flex;
   align-items: center;
-  padding: 0 5px;
-  border-radius: 4px;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.6;
-  letter-spacing: 0.02em;
-}
-.mobile-sess-mode.mode-workflow {
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.12);
-}
-.mobile-sess-mode.mode-custom {
-  color: #8b5cf6;
-  background: rgba(139, 92, 246, 0.12);
-}
-.mobile-sess-mode.mode-leader {
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.12);
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: var(--m-fill-strong);
+  border: 0.5px solid var(--m-separator-strong);
+  color: var(--m-fg-secondary);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
 }
 
-.mobile-sess-meta {
-  font-size: 11px;
-  color: var(--m-plus-fg-secondary);
-  opacity: 0.8;
+.mobile-sess-mode.mode-workflow {
+  font-weight: 700;
+}
+
+.mobile-sess-mode.mode-custom {
+  font-style: italic;
+}
+
+/* 标题：单行截断（同桌面 .sr-title-btn；旧实现允许换行，行高参差不齐） */
+.mobile-sess-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+/* 「当前」徽标：轻量反色小标签（同桌面 .sr-current-badge 语义，但缩到不压过标题） */
+.mobile-sess-current {
+  flex: none;
+  margin-left: 2px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--m-btn-bg);
+  color: var(--m-btn-fg);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* 行尾相对时间：等宽数字 + 弱色（同桌面 .sr-time） */
+.mobile-sess-time {
+  flex: none;
+  margin-left: 2px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--m-fg-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .mobile-sess-empty {
   padding: 18px 0 6px;
   text-align: center;
   font-size: 12.5px;
-  color: var(--m-plus-fg-secondary);
+  color: var(--m-fg-secondary);
   opacity: 0.75;
 }
 
-/* ── 会话按项目文件夹分组（Phase 2，与桌面 rail 同一返回体 + 同一纯函数）──
-   组头 = 文件夹名 + 会话数 + 展开箭头（点击收起/展开整组）；
-   组内会话沿用 .mobile-sess-item 行样式，折叠上限与桌面同源 collapsed_limit。 */
+/* ── 会话按项目文件夹分组（与桌面同一返回体 + 同一纯函数）──
+   组头 = chevron + 文件夹名（flex）+ 会话数；组内行沿用 .mobile-sess-item，
+   折叠上限与桌面同源 collapsed_limit。 */
 .mobile-sess-group {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
+/* 组头：微标签语义（小字号 + 字距 + 弱色），层级明显低于会话标题 */
 .mobile-sess-group-head {
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 6px 2px;
+  min-height: 36px;
+  padding: 6px 8px;
   border: none;
   border-radius: 8px;
   background: transparent;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--m-fg-secondary);
+  letter-spacing: 0.04em;
+  color: var(--m-fg-tertiary);
   text-align: left;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease-out;
 }
 
 .mobile-sess-group-head:active {
   background: var(--m-fill);
 }
 
+.mobile-sess-group-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--m-fg-tertiary);
+}
+
 .mobile-sess-group-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3650,24 +3674,26 @@ body {
   opacity: 0.8;
 }
 
+/* 组内会话计数：弱文本、等宽数字、靠右（移动端行宽大于侧栏，右对齐更整齐） */
 .mobile-sess-group-count {
-  margin-left: auto;
+  flex: none;
   font-size: 11px;
   font-weight: 400;
-  color: var(--m-fg-secondary);
-  opacity: 0.75;
+  color: var(--m-fg-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
-/* 组内列表：组头与条目间距收窄（组内成块，组间 12px 已足够分区） */
+/* 组内列表：组头与条目之间留一点呼吸，组间分区靠 group margin */
 .mobile-sess-group .mobile-sess-list {
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 /* 组内折叠行：展开其余 N 个会话（与桌面 .sr-more-btn 同语义） */
 .mobile-sess-more {
   display: block;
-  width: 100%;
-  margin-top: 6px;
+  width: calc(100% - 2px);
+  margin-top: 2px;
+  margin-left: 2px;
   padding: 8px;
   border: none;
   border-radius: 8px;
