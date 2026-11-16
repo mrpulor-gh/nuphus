@@ -3056,7 +3056,8 @@ body {
 }
 
 .mobile-composer-plus.open svg {
-  transform: rotate(45deg);
+  /* 图片图标不做 45° 旋转（会变成歪相框）：打开态用轻微收缩表达按下 */
+  transform: scale(0.9);
 }
 
 /* 图片胶囊区：横向滚动，贴输入栏上方 */

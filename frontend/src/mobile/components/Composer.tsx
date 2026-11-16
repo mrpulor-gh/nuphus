@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Send as SendIcon, Square as SquareIcon } from 'lucide'
 import { MorphIcon } from 'morphicons/react'
-import { Plus, Camera, Image as ImageIcon, Mic, X, Loader2 } from 'lucide-react'
+import { ImagePlus, Camera, Image as ImageIcon, Mic, X, Loader2 } from 'lucide-react'
 import { t } from '../i18n'
 
 /**
@@ -306,7 +306,9 @@ export default function Composer({
             aria-label={menuOpen ? t('mobile.closeExtMenu') : t('mobile.openExtMenu')}
             aria-expanded={menuOpen}
           >
-            <Plus size={22} aria-hidden="true" />
+            {/* 图标语义 = 图片（面板只有拍摄/相册两项）。不用「+」：桌面端输入栏的
+                「+」是命令/工具菜单，两端同名同形会让用户误以为功能一致。 */}
+            <ImagePlus size={22} aria-hidden="true" />
           </button>
           <textarea
             ref={inputRef}
