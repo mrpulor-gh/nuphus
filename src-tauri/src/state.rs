@@ -381,9 +381,7 @@ impl AppState {
                 });
             }
             E::LlmTextDelta {
-                text,
-                is_thinking,
-                ..
+                text, is_thinking, ..
             } => {
                 if let Some(turn) = guard.as_mut() {
                     let kind = if *is_thinking { "thinking" } else { "text" };
