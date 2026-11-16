@@ -198,6 +198,15 @@ export type ChatAction =
   | { type: 'identity'; identity: { assistantName: string; userLabel: string } }
   /** 刷新/重连后同步执行状态（broadcast 不重传间隙事件，以此恢复 running） */
   | { type: 'sync_running'; running: boolean }
+  /**
+   * 执行中重连：用后端「当前轮快照」补回本轮已产生的思考/文本/工具调用。
+   * 执行期 agent 被 take 出 runtime，history 只有执行前快照 + 当前轮 user，
+   * 本动作把缺失的进行中部分补成一条 streaming 气泡，后续 delta 直接续写。
+   */
+  | {
+      type: 'live_turn_restore'
+      snapshot: { text: string; thinking: string; trace: TraceItem[] }
+    }
   /** 关闭工作流执行卡（WorkflowRunCard 完成态右上角 X）：清除 workflowRun，下次 run_started 重建 */
   | { type: 'workflow_clear' }
 
@@ -1018,6 +1027,34 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         }
       }
       return state
+    }
+    case 'live_turn_restore': {
+      // 执行中重连：后端快照补回本轮已产生的执行过程。
+      // 已有 streaming 气泡（本端一路在看的场景）只补空缺字段，不覆盖实时累积结果。
+      const { snapshot } = action
+      if (!snapshot.text && !snapshot.thinking && snapshot.trace.length === 0) return state
+      const messages = state.messages.slice()
+      const last = messages[messages.length - 1]
+      if (last && last.role === 'assistant' && last.streaming) {
+        messages[messages.length - 1] = {
+          ...last,
+          content: last.content || snapshot.text,
+          thinking: last.thinking || snapshot.thinking || undefined,
+          traceItems:
+            last.traceItems && last.traceItems.length > 0 ? last.traceItems : snapshot.trace,
+        }
+      } else {
+        messages.push({
+          id: rid(),
+          role: 'assistant',
+          content: snapshot.text,
+          thinking: snapshot.thinking || undefined,
+          traceItems: snapshot.trace,
+          streaming: true,
+          timestamp: Date.now(),
+        })
+      }
+      return { ...state, messages }
     }
     case 'optimistic':
       return { ...state, messages: [...finalizeStreaming(state.messages), action.message] }

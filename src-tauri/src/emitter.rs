@@ -68,6 +68,13 @@ impl<R: tauri::Runtime> EventEmitter for TauriEventEmitter<R> {
     fn emit(&self, event: NuphusEvent) {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst);
 
+        // 执行中「当前轮」快照：迟到订阅者（手机端执行中重连）靠 /agent-status 取回
+        // 本轮已产生的思考/文本/工具调用。放在事件出口是为了零遗漏——所有 NuphusEvent
+        // 都经过这里，不需要在各 runtime 分支重复埋点。
+        if let Some(st) = self.app.try_state::<crate::state::AppState>() {
+            st.apply_live_turn(&event);
+        }
+
         // ── 窗口可见性管理 ──
         // HudUpdate: 恢复 HUD 窗口尺寸+位置，确保可见（创建时 visible=false）
         // UserInputRequest: 确保主窗口在前台（用户能看到输入弹窗）

@@ -270,6 +270,28 @@ export async function fetchCustomAgents(token: string): Promise<CustomAgentsInfo
   return (await res.json()) as CustomAgentsInfo
 }
 
+/**
+ * 执行中「当前轮」快照（`/agent-status` 的 liveTurn）。
+ *
+ * 执行期 agent 被 take 出 runtime，history 只能读执行前快照，broadcast 又不补发；
+ * 手机端执行中重连靠这份快照恢复本轮已产生的思考/文本/工具调用。
+ * 字段命名沿用后端结构体（无 rename_all）：`started_at_ms`；trace 内为 camelCase。
+ */
+export interface LiveTurnSnapshot {
+  mode: string
+  started_at_ms: number
+  text: string
+  thinking: string
+  trace: Array<{
+    kind: string
+    callId?: string
+    name?: string
+    status?: string
+    params?: string
+    text?: string
+  }>
+}
+
 /** GET /agent-status 返回：桌面端当前执行状态（执行态唯一来源的派生投影） */
 export interface AgentStatus {
   /**
@@ -284,6 +306,8 @@ export interface AgentStatus {
   /** 桌面端提炼进行中（refine_active 原子锁）：重连/刷新后恢复提炼状态。
    *  可选——旧后端无此字段（视为 false） */
   refine_active?: boolean
+  /** 执行中当前轮快照；仅 running 时有值，无内容或旧后端为 null/缺省 */
+  liveTurn?: LiveTurnSnapshot | null
 }
 
 /** 查询桌面端执行状态（刷新/重连后恢复 running，补齐 broadcast 不重传的间隙事件） */

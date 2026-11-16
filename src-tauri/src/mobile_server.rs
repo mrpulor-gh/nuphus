@@ -1771,11 +1771,21 @@ async fn get_agent_status<R: tauri::Runtime>(
     let refine_active = state
         .refine_active
         .load(std::sync::atomic::Ordering::SeqCst);
+    // 执行中当前轮快照：执行期 agent 被 take 出 runtime，chat_history 只能读
+    // session_backup（执行前快照），broadcast 又不为迟到订阅者补发——手机端
+    // 执行中重连只能拿到「执行前历史 + 当前轮 user」。这里下发本轮已产生的
+    // 思考/文本/工具调用，由前端合并进 streaming 气泡，后续 delta 无缝续写。
+    let live_turn = state
+        .live_turn
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
     Json(serde_json::json!({
         "running": stage.is_busy(),
         "stage": stage.as_str(),
         "append_accepting": stage.accepts_append(),
         "refine_active": refine_active,
+        "liveTurn": live_turn,
     }))
     .into_response()
 }

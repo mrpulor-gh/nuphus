@@ -26,6 +26,7 @@ import {
   getApiBase,
   AuthError,
   type HistoryMessage,
+  type LiveTurnSnapshot,
   type ShelfSessions,
 } from './api'
 import { MobileWsClient, type WsStatus } from './ws'
@@ -35,6 +36,7 @@ import {
   makeOptimisticMessage,
   rid,
   type ChatMessage,
+  type TraceItem,
 } from './store'
 import ChatScreen from './components/ChatScreen'
 import { StopChoiceDialog } from '../ui/StopChoiceDialog'
@@ -430,6 +432,26 @@ export default function App() {
     return foldAssistantHistory(msgs)
   }
 
+  /** /agent-status 的 liveTurn.trace → 前端 TraceItem（执行中重连恢复）。
+   *  后端条目是通用 HistoryTraceItem：tool 带 callId/name/status/params，
+   *  thinking/text 只带 text；这里按 kind 收窄成 store 的联合类型。 */
+  function liveTraceToItems(trace: LiveTurnSnapshot['trace']): TraceItem[] {
+    return trace.flatMap((it): TraceItem[] => {
+      if (it.kind === 'tool') {
+        return [
+          {
+            kind: 'tool',
+            callId: it.callId ?? '',
+            name: it.name ?? '',
+            status: it.status === 'ok' ? 'ok' : it.status === 'fail' ? 'fail' : 'running',
+            params: it.params,
+          },
+        ]
+      }
+      return [{ kind: it.kind === 'thinking' ? 'thinking' : 'text', text: it.text ?? '' }]
+    })
+  }
+
   // ── 历史拉取（首载与每次 WS 就绪后，补齐断线间隙）──
   // 失败自动重试：中继慢/半死时首次失败不卡死——指数退避 3s→6s→12s→24s→30s 重拉，
   // 成功即重置；timer 存在则不重复调度（WS onReady / 前台恢复 / 手动重试会各自触发，
@@ -746,6 +768,19 @@ export default function App() {
           void fetchAgentStatus(token)
             .then(s => {
               dispatch({ type: 'sync_running', running: s.running })
+              // 执行中重连：history 只能给「执行前历史 + 当前轮 user」，
+              // 本轮已产生的思考/文本/工具调用从 liveTurn 快照补回，
+              // 补成 streaming 气泡后，后续 delta 会直接续写同一条。
+              if (s.running && s.liveTurn) {
+                dispatch({
+                  type: 'live_turn_restore',
+                  snapshot: {
+                    text: s.liveTurn.text,
+                    thinking: s.liveTurn.thinking,
+                    trace: liveTraceToItems(s.liveTurn.trace),
+                  },
+                })
+              }
               dispatch({ type: 'refine_state', refining: s.refine_active === true })
               void loadHistory(token)
             })

@@ -156,6 +156,9 @@ pub struct AppState {
     pub plugin_workflow_inflight: Mutex<std::collections::HashSet<String>>,
     /// Session Shelf —— 浅层会话展示台（内存 LRU ≤10 + 磁盘镜像），见 process/shelf.rs
     pub shelf: Mutex<crate::commands::process::shelf::ShelfState>,
+    /// 执行中当前轮的实时快照（emitter 累积，`/agent-status` 下发）。
+    /// 迟到订阅者（手机端执行中重连）据此恢复本轮已产生的执行过程。
+    pub live_turn: Arc<std::sync::Mutex<Option<LiveTurn>>>,
     /// 门铃完工唤醒的**推迟队列**（S2）：门铃 done/blocked 到达时若执行体仍被占用
     /// （Running/Finalizing），唤醒无法受理；而 Finalizing 期主循环已退出、轮次边界不会再
     /// drain 门铃事件，外部 Agent 完工后 Leader 要等用户下次发消息才被顺带唤醒。
@@ -344,12 +347,102 @@ impl Default for AppState {
             plugin_chat_inflight: Mutex::new(std::collections::HashSet::new()),
             plugin_workflow_inflight: Mutex::new(std::collections::HashSet::new()),
             shelf: Mutex::new(crate::commands::process::shelf::ShelfState::default()),
+            live_turn: Arc::new(std::sync::Mutex::new(None)),
             deferred_handoff_wakes: Mutex::new(Vec::new()),
         }
     }
 }
 
 impl AppState {
+    /// 事件出口累积「当前轮」快照（emitter 每条事件调用一次）。
+    ///
+    /// 隔离规则：只有主轮 `ExecutionStarted`（`source != "cli"`）会重置快照；
+    /// 子任务（ExecAgent）的 started 是 `source="cli"`，不得清空主轮已累积内容。
+    /// 完成/错误**不**清空——前端仅在 running=true 时使用，下一轮 started 自然覆盖。
+    ///
+    /// trace 顺序按事件到达交叠记录：thinking / text 与末条同类型则续写，否则新起一条；
+    /// tool 按调用起点插入（与前端实时 appendTraceItem 同语义）。
+    pub fn apply_live_turn(&self, event: &nuphus::agent::events::NuphusEvent) {
+        use nuphus::agent::events::NuphusEvent as E;
+        let Ok(mut guard) = self.live_turn.lock() else {
+            return;
+        };
+        match event {
+            E::ExecutionStarted {
+                source,
+                mode,
+                started_at_ms,
+                ..
+            } => {
+                if source != "cli" {
+                    *guard = Some(LiveTurn {
+                        mode: mode.clone(),
+                        started_at_ms: started_at_ms.unwrap_or(0),
+                        ..Default::default()
+                    });
+                }
+            }
+            E::LlmTextDelta {
+                text,
+                is_thinking,
+                ..
+            } => {
+                if let Some(turn) = guard.as_mut() {
+                    let kind = if *is_thinking { "thinking" } else { "text" };
+                    if *is_thinking {
+                        turn.thinking.push_str(text);
+                    } else {
+                        turn.text.push_str(text);
+                    }
+                    match turn.trace.last_mut() {
+                        Some(last) if last.kind == kind => {
+                            last.text.get_or_insert_with(String::new).push_str(text);
+                        }
+                        _ => turn.trace.push(HistoryTraceItem {
+                            kind: kind.to_string(),
+                            call_id: None,
+                            name: None,
+                            status: None,
+                            params: None,
+                            text: Some(text.clone()),
+                        }),
+                    }
+                }
+            }
+            E::ToolCallStart {
+                call_id,
+                tool_name,
+                params,
+                ..
+            } => {
+                if let Some(turn) = guard.as_mut() {
+                    turn.trace.push(HistoryTraceItem {
+                        kind: "tool".to_string(),
+                        call_id: Some(call_id.clone()),
+                        name: Some(tool_name.clone()),
+                        status: Some("running".to_string()),
+                        params: Some(params.to_string()),
+                        text: None,
+                    });
+                }
+            }
+            E::ToolCallEnd {
+                call_id, success, ..
+            } => {
+                if let Some(turn) = guard.as_mut() {
+                    if let Some(item) = turn
+                        .trace
+                        .iter_mut()
+                        .find(|i| i.call_id.as_deref() == Some(call_id.as_str()))
+                    {
+                        item.status = Some(if *success { "ok" } else { "fail" }.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn record_process_start(&self) {
         self.last_process_time
             .store(now_millis(), std::sync::atomic::Ordering::SeqCst);
@@ -426,6 +519,26 @@ pub struct HistoryTraceItem {
     pub params: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+}
+
+/// 执行中「当前轮」的实时快照（事件出口逐条累积）。
+///
+/// 为什么需要：执行期 agent 被 take 出 runtime，`chat_history` 只能读
+/// session_backup（执行前快照）+ 当前轮 user；broadcast 不为迟到订阅者补发。
+/// 手机端执行中重连/重开时，本轮已产生的思考、文本与工具调用全部丢失。
+/// 这里在事件出口累积一份快照，由 `/agent-status` 下发给迟到订阅者。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LiveTurn {
+    /// 本轮 mode（leader / workflow / custom）
+    pub mode: String,
+    /// 本轮起点（Unix 毫秒，0 = 未知）
+    pub started_at_ms: u64,
+    /// 已产出的正文（llm_text_delta 非 thinking）
+    pub text: String,
+    /// 已产出的思考
+    pub thinking: String,
+    /// 工具调用（与历史 trace_items 同结构，状态 running/ok/fail）
+    pub trace: Vec<HistoryTraceItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
