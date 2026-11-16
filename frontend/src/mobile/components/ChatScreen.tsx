@@ -16,9 +16,11 @@ import type {
 import type { WsStatus } from '../ws'
 import type { ShelfSessions } from '../api'
 import type { ConnectionMode } from '../connection'
+import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { t } from '../i18n'
-import NavBar from './NavBar'
+import NavBar, { type MobilePage } from './NavBar'
+import TabBar from './TabBar'
 import MessageList from './MessageList'
 import Composer from './Composer'
 import ConfirmCard from './ConfirmCard'
@@ -131,96 +133,130 @@ export default function ChatScreen({
   onWorkflowTerminate,
   onWorkflowDismiss,
 }: Props) {
+  /** 主导航页（底部 Tab）；聊天页常驻渲染，切走只做可访问性隐藏，不卸载 */
+  const [page, setPage] = useState<MobilePage>('chat')
+  /** 软键盘弹出时让出 TabBar 高度（否则 TabBar 会浮在键盘上方挤掉输入区） */
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
+
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const el = e.target as HTMLElement | null
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) setKeyboardOpen(true)
+    }
+    const onFocusOut = () => setKeyboardOpen(false)
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
+    return () => {
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusout', onFocusOut)
+    }
+  }, [])
+
+  // 系统返回键（Android 物理键 / 浏览器手势）：非聊天页先回聊天页。
+  // 进入非聊天页压一条占位历史，popstate 消费后回聊天；聊天页不拦截，交还系统。
+  useEffect(() => {
+    if (page === 'chat') return
+    window.history.pushState({ mobilePage: page }, '')
+    const onPop = () => setPage('chat')
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [page])
+
   return (
     <div className="mobile-app">
-      <NavBar
-        wsStatus={wsStatus}
-        activity={activity}
-        token={token}
-        model={model}
-        tokenUsage={tokenUsage}
-        connMode={connMode}
-        onReloadHistory={onReloadHistory}
-        onSwitchToLanManual={onSwitchToLanManual}
-        onLanSwitchRequest={onLanSwitchRequest}
-        lanSwitching={lanSwitching}
-        onNewChat={onNewChat}
-        onDisconnect={onDisconnect}
-        sessions={sessions}
-        onSwitchSession={onSwitchSession}
-      />
-      {historyError && (
-        <div
-          className="mobile-banner is-retryable"
-          role="button"
-          tabIndex={0}
-          onClick={onRetryHistory}
-          onKeyDown={e => {
-            if ((e.key === 'Enter' || e.key === ' ') && onRetryHistory) onRetryHistory()
-          }}
-        >
-          {historyError}
-          <span className="mobile-banner-retry">{t('mobile.retry')}</span>
-        </div>
-      )}
-      <AddToHomeScreen visible={true} />
-      {/* 工作流胶囊：absolute 悬浮于消息区顶部（覆盖式，滚动内容从胶囊背后经过 → 毛玻璃原生质感） */}
-      {workflowRun && (
-        <div className="mobile-wf-float">
-          <WorkflowRunCard
-            workflowRun={workflowRun}
-            busy={wfControlBusy}
-            onPause={onWorkflowPause ?? (() => {})}
-            onResume={onWorkflowResume ?? (() => {})}
-            onTerminate={onWorkflowTerminate ?? (() => {})}
-            onDismiss={onWorkflowDismiss}
-          />
-        </div>
-      )}
-      <MessageList
-        messages={messages}
-        activity={activity}
-        assistantName={assistantName}
-        tokenUsage={tokenUsage}
-        onRateMessage={onRateMessage}
-      />
-      {pendingConfirm && (
-        <ConfirmCard confirm={pendingConfirm} token={token} onResolved={onConfirmResolved} />
-      )}
-      {pendingUserInput && (
-        <UserInputCard input={pendingUserInput} token={token} onResolved={onUserInputResolved} />
-      )}
-      {pendingRefine && !refining && (
-        <RefineModal
-          refine={pendingRefine}
-          refining={refining}
-          onConfirm={onRefineConfirm}
-          onSkip={onRefineSkip}
+      <div className="mobile-chat-pane" aria-hidden={page !== 'chat'}>
+        <NavBar
+          page={page}
+          onPageChange={setPage}
+          wsStatus={wsStatus}
+          activity={activity}
+          token={token}
+          model={model}
+          tokenUsage={tokenUsage}
+          connMode={connMode}
+          onReloadHistory={onReloadHistory}
+          onSwitchToLanManual={onSwitchToLanManual}
+          onLanSwitchRequest={onLanSwitchRequest}
+          lanSwitching={lanSwitching}
+          onNewChat={onNewChat}
+          onDisconnect={onDisconnect}
+          sessions={sessions}
+          onSwitchSession={onSwitchSession}
         />
-      )}
-      {refining && (
-        <div className="mobile-refine-progress" role="status">
-          <Loader2 size={14} aria-hidden="true" /> 正在提炼上下文…
-        </div>
-      )}
-      {toast && <div className="mobile-toast">{toast}</div>}
-      {/* 发送按钮：offline（WS 断开）才禁用；connecting（刚打开/重连中）允许发送——
+        {historyError && (
+          <div
+            className="mobile-banner is-retryable"
+            role="button"
+            tabIndex={0}
+            onClick={onRetryHistory}
+            onKeyDown={e => {
+              if ((e.key === 'Enter' || e.key === ' ') && onRetryHistory) onRetryHistory()
+            }}
+          >
+            {historyError}
+            <span className="mobile-banner-retry">{t('mobile.retry')}</span>
+          </div>
+        )}
+        <AddToHomeScreen visible={true} />
+        {/* 工作流胶囊：absolute 悬浮于消息区顶部（覆盖式，滚动内容从胶囊背后经过 → 毛玻璃原生质感） */}
+        {workflowRun && (
+          <div className="mobile-wf-float">
+            <WorkflowRunCard
+              workflowRun={workflowRun}
+              busy={wfControlBusy}
+              onPause={onWorkflowPause ?? (() => {})}
+              onResume={onWorkflowResume ?? (() => {})}
+              onTerminate={onWorkflowTerminate ?? (() => {})}
+              onDismiss={onWorkflowDismiss}
+            />
+          </div>
+        )}
+        <MessageList
+          messages={messages}
+          activity={activity}
+          assistantName={assistantName}
+          tokenUsage={tokenUsage}
+          onRateMessage={onRateMessage}
+        />
+        {pendingConfirm && (
+          <ConfirmCard confirm={pendingConfirm} token={token} onResolved={onConfirmResolved} />
+        )}
+        {pendingUserInput && (
+          <UserInputCard input={pendingUserInput} token={token} onResolved={onUserInputResolved} />
+        )}
+        {pendingRefine && !refining && (
+          <RefineModal
+            refine={pendingRefine}
+            refining={refining}
+            onConfirm={onRefineConfirm}
+            onSkip={onRefineSkip}
+          />
+        )}
+        {refining && (
+          <div className="mobile-refine-progress" role="status">
+            <Loader2 size={14} aria-hidden="true" /> 正在提炼上下文…
+          </div>
+        )}
+        {toast && <div className="mobile-toast">{toast}</div>}
+        {/* 发送按钮：offline（WS 断开）才禁用；connecting（刚打开/重连中）允许发送——
           POST 走 HTTP 不依赖 WS，消息受理后由 history_merge 兜底确认，
           曾因 connecting 禁用导致用户首条消息发不出去（P1）。 */}
-      <Composer
-        disabled={wsStatus === 'offline'}
-        token={token}
-        assistantName={assistantName}
-        mode={activity.mode}
-        model={model}
-        tokenUsage={tokenUsage}
-        isProcessing={activity.running}
-        onStopExecution={onStopExecution}
-        onSend={onSend}
-        onModelChanged={onModelChanged}
-        onToast={onToast}
-        onReloadHistory={onReloadHistory}
-      />
+        <Composer
+          disabled={wsStatus === 'offline'}
+          token={token}
+          assistantName={assistantName}
+          mode={activity.mode}
+          model={model}
+          tokenUsage={tokenUsage}
+          isProcessing={activity.running}
+          onStopExecution={onStopExecution}
+          onSend={onSend}
+          onModelChanged={onModelChanged}
+          onToast={onToast}
+          onReloadHistory={onReloadHistory}
+        />
+      </div>
+      {!keyboardOpen && <TabBar page={page} onChange={setPage} />}
     </div>
   )
 }

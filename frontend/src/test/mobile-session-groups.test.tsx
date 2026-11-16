@@ -81,9 +81,11 @@ function sessionsFixture(overrides: Partial<ShelfSessions> = {}): ShelfSessions 
   }
 }
 
-function renderNav(sessions: ShelfSessions, onSwitchSession = vi.fn()) {
+function renderNav(sessions: ShelfSessions, onSwitchSession = vi.fn(), onPageChange = vi.fn()) {
   render(
     <NavBar
+      page="sessions"
+      onPageChange={onPageChange}
       wsStatus="online"
       activity={activity}
       token="token"
@@ -92,15 +94,14 @@ function renderNav(sessions: ShelfSessions, onSwitchSession = vi.fn()) {
       onSwitchSession={onSwitchSession}
     />,
   )
-  // 打开设置抽屉（会话列表在主视图内）
-  fireEvent.click(screen.getByLabelText('菜单'))
-  return { onSwitchSession }
+  // 会话页由 page prop 直接渲染（旧实现靠点品牌区打开抽屉，入口已改为底部 Tab）
+  return { onSwitchSession, onPageChange }
 }
 
 describe('移动端会话列表分组', () => {
   it('按 projects[] 顺序建组，未分组末位，归档组整组隐藏', async () => {
     renderNav(sessionsFixture())
-    const sheet = screen.getByRole('dialog', { name: '设置' })
+    const sheet = screen.getByRole('dialog', { name: '会话' })
 
     await waitFor(() => expect(within(sheet).getByText('一号')).toBeInTheDocument())
     const heads = Array.from(sheet.querySelectorAll('.mobile-sess-group-name')).map(
@@ -132,7 +133,8 @@ describe('移动端会话列表分组', () => {
 
   it('组内按 collapsed_limit 折叠并支持展开其余；点选仍传 (id, mode)', async () => {
     const onSwitchSession = vi.fn()
-    renderNav(sessionsFixture(), onSwitchSession)
+    const onPageChange = vi.fn()
+    renderNav(sessionsFixture(), onSwitchSession, onPageChange)
     await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
 
     const group = screen.getByText('一号').closest('.mobile-sess-group') as HTMLElement
@@ -144,6 +146,8 @@ describe('移动端会话列表分组', () => {
 
     fireEvent.click(within(group).getByText('一号会话'))
     expect(onSwitchSession).toHaveBeenCalledWith('bm1', 'leader')
+    // 切会话后自动回聊天页（意图是去看这段对话）
+    expect(onPageChange).toHaveBeenCalledWith('chat')
   })
 
   it('排序偏好跟随桌面（同一返回体 sort_prefs：组序维度 + 组内键）', async () => {
@@ -186,7 +190,7 @@ describe('移动端会话列表分组', () => {
         sort_prefs: { group_order: 'recent', sort_key: 'created' },
       }),
     )
-    const sheet = screen.getByRole('dialog', { name: '设置' })
+    const sheet = screen.getByRole('dialog', { name: '会话' })
     await waitFor(() => expect(within(sheet).getByText('一号')).toBeInTheDocument())
 
     // 组序维度：Nuphus 最近会话 5000 > 一号 2000（书签序本是一号在前）

@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ALargeSmall as ALargeSmallIcon, Moon as MoonIcon, Sun as SunIcon } from 'lucide'
 import {
   Check,
@@ -49,9 +50,16 @@ import {
 import { t } from '../i18n'
 import ServerAddressControl from './ServerAddressControl'
 
+/** 移动端主导航页（底部 Tab 投影，页面本体由本组件渲染） */
+export type MobilePage = 'chat' | 'sessions' | 'settings'
+
 interface Props {
   wsStatus: WsStatus
   activity: ActivityState
+  /** 当前主导航页 */
+  page: MobilePage
+  /** 切换主导航页（TabBar / 页内跳转共用） */
+  onPageChange: (page: MobilePage) => void
   /** 鉴权 token（拉取模型配置 / 切换模式模型） */
   token: string
   /** 当前执行模型（store.model，session_info 事件下发，只读展示） */
@@ -159,6 +167,8 @@ function BlinkLogo() {
 export default function NavBar({
   wsStatus,
   activity,
+  page,
+  onPageChange,
   token,
   model,
   tokenUsage,
@@ -357,61 +367,17 @@ export default function NavBar({
       setModelSaving(false)
     }
   }
-  // 设置抽屉（点击 logo 直接侧滑）——单面板 + 视图切换：
-  // main（mode 手风琴卡 + 模型卡 + 会话列表）/ model（子视图）/ network（header 弹窗）
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  // 主导航页由 props.page 驱动（底部 Tab）；设置页内部保留子视图切换：
+  // main（模式卡 + 模型卡 + 网络与关于）/ model（模型选择子页）
+  const settingsOpen = page === 'settings'
   const [settingsView, setSettingsView] = useState<SettingsView>('main')
   /** 会话分组：组头折叠态（默认全展开，运行时状态不持久化） */
   const [sessCollapsed, setSessCollapsed] = useState<Record<string, boolean>>({})
   /** 会话分组：组内「展开其余 N 个」态 */
   const [sessExpanded, setSessExpanded] = useState<Record<string, boolean>>({})
-  const logoWrapRef = useRef<HTMLDivElement>(null)
-  const settingsSheetRef = useRef<HTMLDivElement>(null)
 
-  // 右滑关闭手势（跟随手指 + 阈值触发）：抽屉随手指右移，松手时
-  // 位移 > 抽屉宽度 60% → 滑出关闭；未达 → 弹回。原实现 touchEnd 直接关（无跟随、
-  // 无动画，突兀）。拖拽中禁用 transition（跟手），松手/关闭启用（平滑）。
-  const [sheetDragX, setSheetDragX] = useState(0)
-  const [sheetClosing, setSheetClosing] = useState(false)
-  const dragRef = useRef(false)
-
-  const swipeStartXRef = useRef<number | null>(null)
-  const swipeStartYRef = useRef<number | null>(null)
-  const onSheetTouchStart = (e: React.TouchEvent) => {
-    swipeStartXRef.current = e.touches[0].clientX
-    swipeStartYRef.current = e.touches[0].clientY
-    dragRef.current = false
-    setSheetClosing(false)
-    setSheetDragX(0)
-  }
-  const onSheetTouchMove = (e: React.TouchEvent) => {
-    if (swipeStartXRef.current == null || swipeStartYRef.current == null) return
-    const dx = e.touches[0].clientX - swipeStartXRef.current
-    const dy = e.touches[0].clientY - swipeStartYRef.current
-    // 仅横向手势跟随（防纵向滚动误触发）；右滑才动（dx>0），左滑/无位移保持
-    if (Math.abs(dx) > Math.abs(dy) && dx > 0) {
-      dragRef.current = true
-      setSheetDragX(dx)
-    }
-  }
-  const onSheetTouchEnd = (e: React.TouchEvent) => {
-    if (swipeStartXRef.current == null || swipeStartYRef.current == null) return
-    const dx = e.changedTouches[0].clientX - swipeStartXRef.current
-    const dy = e.changedTouches[0].clientY - swipeStartYRef.current
-    swipeStartXRef.current = null
-    swipeStartYRef.current = null
-    dragRef.current = false // 先解除跟手态，让弹回/滑出启用 transition
-    if (dx > 0 && Math.abs(dy) < 40) {
-      // 阈值：抽屉宽度 60%（下限 60px）→ 滑出关闭；未达 → 弹回
-      const width = settingsSheetRef.current?.offsetWidth ?? 0
-      if (dx > Math.max(width * 0.6, 60)) {
-        setSheetClosing(true)
-        window.setTimeout(() => closeSettings(), 240)
-        return
-      }
-    }
-    setSheetDragX(0)
-  }
+  // 页面切换没有横向拖拽手势：底部 Tab 是显式导航，返回由「Tab 点击 / 系统返回键」承担，
+  // 不再有抽屉式跟手滑出（旧实现右滑 60% 关闭，方向与 iOS 返回手势相反且只支持关闭）。
 
   // mode 手风琴（主视图直接切换，不再子视图）：展开显示 Leader/Workflow/Custom
   const [modeOpen, setModeOpen] = useState(false)
@@ -457,17 +423,20 @@ export default function NavBar({
   /** 模型配置请求序号：慢链路下先发后至的响应不得覆盖新选择/新配置 */
   const modelFetchSeqRef = useRef(0)
 
-  /** 关闭抽屉：统一重置回主列表（避免下次打开停留在子视图） */
+  /** 回聊天页：设置页统一重置回主视图（避免下次进入停留在子页） */
   const closeSettings = () => {
     setSettingsView('main')
-    setSheetClosing(false)
-    setSheetDragX(0)
-    setSettingsOpen(false)
     setModelSearch('')
     setModelError(null)
     setEffortTouched(false)
     modelDirtyRef.current = false
+    onPageChange('chat')
   }
+
+  // 离开设置页即重置子视图：避免下次回来停在模型选择页（暂存选择一并丢弃）
+  useEffect(() => {
+    if (page !== 'settings') setSettingsView('main')
+  }, [page])
 
   /** 返回主视图（header ← / 底部「返回」共用）：放弃子视图未确认的暂存选择 */
   const backToMain = () => {
@@ -510,46 +479,20 @@ export default function NavBar({
     }
   }, [fsOpen])
 
-  // 设置抽屉：点击外部关闭（轻量 popover，不叠加遮罩）
-  useEffect(() => {
-    if (!settingsOpen) return
-    const onDown = (e: MouseEvent | TouchEvent) => {
-      const t = e.target as Node
-      // logo 区域排除：抽屉开着时点 logo 走 toggle 关闭（不先触发外部关闭）
-      if (logoWrapRef.current?.contains(t)) return
-      if (settingsSheetRef.current?.contains(t)) return
-      closeSettings()
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('touchstart', onDown)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('touchstart', onDown)
-    }
-  }, [settingsOpen])
+  // 页面是常驻导航目标，没有「点击外部关闭」：切页只由底部 Tab 或页内动作触发。
 
   const pickFontSize = (size: MobileFontSize) => {
     setFs(setFontSize(size))
     setFsOpen(false)
   }
 
-  /** 品牌区：点击 logo 直接侧滑设置抽屉（不再弹中间菜单——大王裁定多余步骤） */
+  /** 品牌区：纯展示——导航入口收敛到底部 Tab，品牌不再承担菜单职责 */
   const renderBrand = () => (
-    <div className="mobile-nav-brand-wrap" ref={logoWrapRef}>
-      <button
-        type="button"
-        className="mobile-nav-brand"
-        onClick={() => {
-          if (settingsOpen) setSettingsView('main')
-          setSettingsOpen(o => !o)
-        }}
-        aria-label="菜单"
-        aria-haspopup="dialog"
-        aria-expanded={settingsOpen}
-      >
+    <div className="mobile-nav-brand-wrap">
+      <div className="mobile-nav-brand is-static">
         <BlinkLogo />
         <span className="mobile-nav-title">Nuphus</span>
-      </button>
+      </div>
     </div>
   )
 
@@ -684,32 +627,27 @@ export default function NavBar({
     )
   }
 
-  const renderSettings = () =>
-    settingsOpen ? (
-      <div
-        className="mobile-settings-sheet"
-        role="dialog"
-        aria-label="设置"
-        ref={settingsSheetRef}
-        onTouchStart={onSheetTouchStart}
-        onTouchMove={onSheetTouchMove}
-        onTouchEnd={onSheetTouchEnd}
-        style={{
-          transform: sheetClosing ? 'translateX(100%)' : `translateX(${sheetDragX}px)`,
-          // 拖拽中跟手（禁 transition），松手弹回/滑出启用过渡
-          transition: dragRef.current ? 'none' : 'transform 240ms cubic-bezier(0.2, 0.8, 0.3, 1)',
-        }}
-      >
-        {/* 头部：主列表=logo 信息（品牌）| 子视图=返回 + 标题；右侧统一关闭 */}
+  /** 主导航页内容：会话页 / 设置页（聊天页由 ChatScreen 渲染，不在此处） */
+  const renderPage = () => {
+    if (page === 'chat') return null
+    // 设置页子视图（模型选择）只在设置页生效；切走再回来会重置（见下方 effect）
+    const subView = page === 'settings' && settingsView !== 'main'
+    return (
+      <div className="mobile-page" role="dialog" aria-label={page === 'sessions' ? '会话' : '设置'}>
+        {/* 头部：主视图=页面标题（设置页带连接状态）| 子视图=返回 + 标题 */}
         <div className="mobile-mode-head">
-          {settingsView === 'main' ? (
+          {!subView ? (
             <span className="mobile-settings-brand">
-              <BlinkLogo />
-              <span className="mobile-settings-brand-name">Nuphus</span>
-              <span className={`mobile-settings-badge is-${wsStatus}`} role="status">
-                <span className="mobile-settings-badge-dot" aria-hidden="true" />
-                {STATUS_LABEL[wsStatus]()}
+              {page === 'settings' && <BlinkLogo />}
+              <span className="mobile-settings-brand-name">
+                {page === 'sessions' ? '会话' : '设置'}
               </span>
+              {page === 'settings' && (
+                <span className={`mobile-settings-badge is-${wsStatus}`} role="status">
+                  <span className="mobile-settings-badge-dot" aria-hidden="true" />
+                  {STATUS_LABEL[wsStatus]()}
+                </span>
+              )}
             </span>
           ) : (
             <button
@@ -723,18 +661,21 @@ export default function NavBar({
             </button>
           )}
           <div className="mobile-mode-head-actions">
-            <button
-              type="button"
-              className="mobile-settings-newchat"
-              onClick={openNewChatModal}
-              disabled={activity.running}
-              aria-label={t('mobile.newChat')}
-            >
-              <Plus size={15} aria-hidden="true" />
-              <span>{t('mobile.newChat')}</span>
-            </button>
-            {/* 主视图无 X 关闭（右滑关闭 + 外部点击关闭）；子视图保留 X */}
-            {settingsView !== 'main' && (
+            {/* 新会话入口只属于会话页（高频动作放在列表页顶部） */}
+            {page === 'sessions' && (
+              <button
+                type="button"
+                className="mobile-settings-newchat"
+                onClick={openNewChatModal}
+                disabled={activity.running}
+                aria-label={t('mobile.newChat')}
+              >
+                <Plus size={15} aria-hidden="true" />
+                <span>{t('mobile.newChat')}</span>
+              </button>
+            )}
+            {/* 子视图保留 X：一步回聊天页（主视图靠底部 Tab 切走） */}
+            {subView && (
               <button
                 type="button"
                 className="mobile-model-card-x"
@@ -748,249 +689,352 @@ export default function NavBar({
         </div>
         {/* 内容区：唯一可滚动区域（header/footer 固定不跳动） */}
         <div className="mobile-settings-body">
-          {settingsView === 'main' ? (
+          {!subView ? (
             <>
-              {/* 实时模型信息卡（反色舒展）：header 下方第一块。数据源=桌面输入框模型
+              {page === 'settings' && (
+                <>
+                  {/* 实时模型信息卡（反色舒展）：header 下方第一块。数据源=桌面输入框模型
                 + ctx hover 同源同字段：模型名=effective_model 单点；ctx 进度条=桌面
                 5 格 gauge 同款，已用/容量=token_usage WS 实时累计 input + model-config
                 contextWindow（0=未知显示--）；cache/step/time=命中率/工具步数/执行用时。
                 WS 事件驱动实时同步。 */}
-              {/* 运行模式卡（模型卡上方；样式仿模型信息卡）：手风琴直接切换——
+                  {/* 运行模式卡（模型卡上方；样式仿模型信息卡）：手风琴直接切换——
                 头部点开/收起模式列表（Leader/Workflow/Custom 点击即切，与桌面 mode
                 铭牌同源）；「当前模式」徽章放在介绍前做引导，箭头下标即展开入口 */}
-              <div className="mobile-mode-info">
-                <button
-                  type="button"
-                  className="mobile-mode-info-head"
-                  onClick={() => setModeOpen(o => !o)}
-                  aria-expanded={modeOpen}
-                >
-                  <span className="mobile-mode-info-name">{modeLabel}</span>
-                  <ChevronDown
-                    size={16}
-                    className={['mobile-mode-info-arrow', modeOpen ? 'is-open' : '']
-                      .filter(Boolean)
-                      .join(' ')}
-                    aria-hidden="true"
-                  />
-                </button>
-                {modeOpen && (
-                  <div className="mobile-mode-info-list" role="radiogroup" aria-label="模式">
-                    {/* 执行中锁定模式切换（与桌面 mode chip 一致，同一后端执行态投影）：
+                  <div className="mobile-mode-info">
+                    <button
+                      type="button"
+                      className="mobile-mode-info-head"
+                      onClick={() => setModeOpen(o => !o)}
+                      aria-expanded={modeOpen}
+                    >
+                      <span className="mobile-mode-info-name">{modeLabel}</span>
+                      <ChevronDown
+                        size={16}
+                        className={['mobile-mode-info-arrow', modeOpen ? 'is-open' : '']
+                          .filter(Boolean)
+                          .join(' ')}
+                        aria-hidden="true"
+                      />
+                    </button>
+                    {modeOpen && (
+                      <div className="mobile-mode-info-list" role="radiogroup" aria-label="模式">
+                        {/* 执行中锁定模式切换（与桌面 mode chip 一致，同一后端执行态投影）：
                         主指令受理时已按发送 mode 绑定当前会话，执行中改写会让后端
                         set_mode 拒绝（set_mode_impl 执行态判定），这里同步禁用并说明，
                         避免「点了没反应」。 */}
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={currentMode === 'leader'}
-                      disabled={sessLocked}
-                      className={[
-                        'mobile-mode-info-opt',
-                        currentMode === 'leader' ? 'is-active' : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                      onClick={() => selectMode('leader')}
-                    >
-                      <span className="mobile-mode-info-opt-name">Leader</span>
-                      <span className="mobile-mode-info-opt-desc">自主判断路径</span>
-                      {currentMode === 'leader' && <Check size={15} aria-hidden="true" />}
-                    </button>
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={currentMode === 'workflow'}
-                      disabled={sessLocked}
-                      className={[
-                        'mobile-mode-info-opt',
-                        currentMode === 'workflow' ? 'is-active' : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                      onClick={() => selectMode('workflow')}
-                    >
-                      <span className="mobile-mode-info-opt-name">Workflow</span>
-                      <span className="mobile-mode-info-opt-desc">解析模板生成可执行工作流</span>
-                      {currentMode === 'workflow' && <Check size={15} aria-hidden="true" />}
-                    </button>
-                    {activeCustomName ? (
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={currentMode === 'custom'}
-                        disabled={sessLocked}
-                        className={[
-                          'mobile-mode-info-opt',
-                          currentMode === 'custom' ? 'is-active' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                        onClick={() => selectMode('custom')}
-                      >
-                        <span className="mobile-mode-info-opt-name">{activeCustomName}</span>
-                        <span className="mobile-mode-info-opt-desc">我的专属 Agent</span>
-                        {currentMode === 'custom' && <Check size={15} aria-hidden="true" />}
-                      </button>
-                    ) : (
-                      <div className="mobile-mode-info-note">自定义 Agent 请在桌面端创建</div>
-                    )}
-                    {sessLocked && (
-                      <div className="mobile-mode-info-note">执行中不可切换模式，结束后可切换</div>
-                    )}
-                  </div>
-                )}
-                <div className="mobile-mode-info-desc-row">
-                  <span className="mobile-mode-info-badge">{t('mobile.currentMode')}</span>
-                  <span className="mobile-mode-info-desc">{modeDesc}</span>
-                </div>
-              </div>
-              <div className="mobile-model-info">
-                <div className="mobile-model-info-head">
-                  <span className="mobile-model-info-name">
-                    {model || modelConfig?.current || '—'}
-                  </span>
-                  {ctxCap > 0 && (
-                    <span className="mobile-model-info-cap">{formatTokens(ctxCap)}</span>
-                  )}
-                </div>
-                <div className="mobile-model-info-ctx">
-                  <span className="mobile-model-info-ctx-label">ctx</span>
-                  <span className="mobile-model-info-ctx-gauge" aria-hidden>
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <span
-                        key={i}
-                        className="mobile-model-info-ctx-cell"
-                        style={i < Math.round(ctxPct * 5) ? { background: ctxColor } : undefined}
-                      />
-                    ))}
-                  </span>
-                  <span className="mobile-model-info-ctx-usage">
-                    {ctxCap > 0
-                      ? `${formatTokens(ctxUsed)}/${formatTokens(ctxCap)}`
-                      : `${formatTokens(ctxUsed)}/--`}
-                  </span>
-                  <span className="mobile-model-info-pct" style={{ color: ctxColor }}>
-                    {ctxCap > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}
-                  </span>
-                </div>
-                <div className="mobile-model-info-foot">
-                  <div className="mobile-model-info-meta">
-                    {cacheRate >= 0 && (
-                      <span style={{ color: cacheColor }}>cache {cacheRate.toFixed(0)}%</span>
-                    )}
-                    <span>step {execSteps}</span>
-                    <span>time {formatElapsed(execDuration)}</span>
-                    {currentModelInfo && currentModelInfo.reasoning_efforts.length > 0 && (
-                      <span>effort {modelConfig?.reasoningEffort || 'default'}</span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    className="mobile-model-info-switch"
-                    onClick={openModelView}
-                  >
-                    {t('mobile.switchModel')}
-                  </button>
-                </div>
-              </div>
-              {/* 会话列表：主视图直接展示（不再子视图）——**按项目文件夹分组**渲染，
-                与桌面 rail 同一返回体 + 同一分组纯函数；点选即切换电脑端视图。
-                执行中/后端守卫锁定时禁用。 */}
-              <div className="mobile-sess-section">
-                <div className="mobile-settings-group">{t('sessionRail.projectsTitle')}</div>
-                {sessGroups.length > 0 ? (
-                  sessGroups.map(group => {
-                    const collapsed = !!sessCollapsed[group.key]
-                    const slice = visibleGroupSessions(group, sessLimit, !!sessExpanded[group.key])
-                    return (
-                      <div className="mobile-sess-group" key={group.key || '__ungrouped__'}>
-                        {/* 组头：文件夹名 + 会话数；点击收起/展开整组 */}
                         <button
                           type="button"
-                          className="mobile-sess-group-head"
-                          onClick={() =>
-                            setSessCollapsed(m => ({ ...m, [group.key]: !m[group.key] }))
-                          }
-                          aria-expanded={!collapsed}
+                          role="radio"
+                          aria-checked={currentMode === 'leader'}
+                          disabled={sessLocked}
+                          className={[
+                            'mobile-mode-info-opt',
+                            currentMode === 'leader' ? 'is-active' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => selectMode('leader')}
                         >
-                          <span
-                            className={`mobile-sess-group-name${
-                              group.path === null ? ' is-ungrouped' : ''
-                            }`}
-                          >
-                            {group.name || t('sessionRail.ungrouped')}
-                          </span>
-                          <span className="mobile-sess-group-count">{group.sessions.length}</span>
-                          {collapsed ? (
-                            <ChevronRight size={14} aria-hidden="true" />
-                          ) : (
-                            <ChevronDown size={14} aria-hidden="true" />
-                          )}
+                          <span className="mobile-mode-info-opt-name">Leader</span>
+                          <span className="mobile-mode-info-opt-desc">自主判断路径</span>
+                          {currentMode === 'leader' && <Check size={15} aria-hidden="true" />}
                         </button>
-                        {!collapsed &&
-                          (group.sessions.length > 0 ? (
-                            <>
-                              <div className="mobile-sess-list">
-                                {slice.sessions.map(item => (
-                                  <button
-                                    key={item.id}
-                                    type="button"
-                                    className={[
-                                      'mobile-sess-item',
-                                      item.is_active ? 'is-active' : '',
-                                    ]
-                                      .filter(Boolean)
-                                      .join(' ')}
-                                    disabled={sessLocked}
-                                    onClick={() => onSwitchSession?.(item.id, item.mode)}
-                                  >
-                                    <span className="mobile-sess-title">
-                                      {item.mode && (
-                                        <span
-                                          className={`mobile-sess-mode mode-${item.mode}`}
-                                          aria-hidden="true"
-                                        >
-                                          {item.mode.toUpperCase()}
-                                        </span>
-                                      )}
-                                      {item.title || item.id}
-                                    </span>
-                                    <span className="mobile-sess-meta">
-                                      {item.is_active ? '当前 · ' : ''}
-                                      {activity.running && !item.is_active ? '执行中锁定 · ' : ''}
-                                      {item.message_count} 条
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
-                              {/* 折叠行：与桌面同一上限语义（全局 collapsed_limit） */}
-                              {slice.hiddenCount > 0 && (
-                                <button
-                                  type="button"
-                                  className="mobile-sess-more"
-                                  onClick={() =>
-                                    setSessExpanded(m => ({ ...m, [group.key]: true }))
-                                  }
-                                >
-                                  {t('sessionRail.expandMore', String(slice.hiddenCount))}
-                                </button>
-                              )}
-                            </>
-                          ) : (
-                            // 空文件夹（书签存在但无会话）：弱提示，组仍显示
-                            <div className="mobile-sess-empty">{t('sessionRail.groupEmpty')}</div>
-                          ))}
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={currentMode === 'workflow'}
+                          disabled={sessLocked}
+                          className={[
+                            'mobile-mode-info-opt',
+                            currentMode === 'workflow' ? 'is-active' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => selectMode('workflow')}
+                        >
+                          <span className="mobile-mode-info-opt-name">Workflow</span>
+                          <span className="mobile-mode-info-opt-desc">
+                            解析模板生成可执行工作流
+                          </span>
+                          {currentMode === 'workflow' && <Check size={15} aria-hidden="true" />}
+                        </button>
+                        {activeCustomName ? (
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={currentMode === 'custom'}
+                            disabled={sessLocked}
+                            className={[
+                              'mobile-mode-info-opt',
+                              currentMode === 'custom' ? 'is-active' : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' ')}
+                            onClick={() => selectMode('custom')}
+                          >
+                            <span className="mobile-mode-info-opt-name">{activeCustomName}</span>
+                            <span className="mobile-mode-info-opt-desc">我的专属 Agent</span>
+                            {currentMode === 'custom' && <Check size={15} aria-hidden="true" />}
+                          </button>
+                        ) : (
+                          <div className="mobile-mode-info-note">自定义 Agent 请在桌面端创建</div>
+                        )}
+                        {sessLocked && (
+                          <div className="mobile-mode-info-note">
+                            执行中不可切换模式，结束后可切换
+                          </div>
+                        )}
                       </div>
-                    )
-                  })
-                ) : (
-                  <div className="mobile-sess-empty">{t('sessionRail.emptySessions')}</div>
-                )}
-                <div className="mobile-settings-reset-hint">
-                  切换的是电脑端正在显示的对话，两端同步
-                </div>
-              </div>
+                    )}
+                    <div className="mobile-mode-info-desc-row">
+                      <span className="mobile-mode-info-badge">{t('mobile.currentMode')}</span>
+                      <span className="mobile-mode-info-desc">{modeDesc}</span>
+                    </div>
+                  </div>
+                  <div className="mobile-model-info">
+                    <div className="mobile-model-info-head">
+                      <span className="mobile-model-info-name">
+                        {model || modelConfig?.current || '—'}
+                      </span>
+                      {ctxCap > 0 && (
+                        <span className="mobile-model-info-cap">{formatTokens(ctxCap)}</span>
+                      )}
+                    </div>
+                    <div className="mobile-model-info-ctx">
+                      <span className="mobile-model-info-ctx-label">ctx</span>
+                      <span className="mobile-model-info-ctx-gauge" aria-hidden>
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <span
+                            key={i}
+                            className="mobile-model-info-ctx-cell"
+                            style={
+                              i < Math.round(ctxPct * 5) ? { background: ctxColor } : undefined
+                            }
+                          />
+                        ))}
+                      </span>
+                      <span className="mobile-model-info-ctx-usage">
+                        {ctxCap > 0
+                          ? `${formatTokens(ctxUsed)}/${formatTokens(ctxCap)}`
+                          : `${formatTokens(ctxUsed)}/--`}
+                      </span>
+                      <span className="mobile-model-info-pct" style={{ color: ctxColor }}>
+                        {ctxCap > 0 ? `${Math.round(ctxPct * 100)}%` : '--'}
+                      </span>
+                    </div>
+                    <div className="mobile-model-info-foot">
+                      <div className="mobile-model-info-meta">
+                        {cacheRate >= 0 && (
+                          <span style={{ color: cacheColor }}>cache {cacheRate.toFixed(0)}%</span>
+                        )}
+                        <span>step {execSteps}</span>
+                        <span>time {formatElapsed(execDuration)}</span>
+                        {currentModelInfo && currentModelInfo.reasoning_efforts.length > 0 && (
+                          <span>effort {modelConfig?.reasoningEffort || 'default'}</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="mobile-model-info-switch"
+                        onClick={openModelView}
+                      >
+                        {t('mobile.switchModel')}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 常规设置项：此前散落在 header 图标与网络弹窗，收进设置页给它们归属 */}
+                  <div className="mobile-settings-group">连接</div>
+                  <div className="mobile-settings-card">
+                    <button
+                      type="button"
+                      className="mobile-settings-card-row"
+                      onClick={() => setNetworkOpen(true)}
+                    >
+                      <Wifi size={16} className="mobile-settings-card-icon" aria-hidden="true" />
+                      <span className="mobile-settings-card-title">网络与连接</span>
+                      <span className="mobile-settings-card-value">
+                        {connMode === 'lan'
+                          ? t('mobile.connLan')
+                          : connMode === 'wan'
+                            ? t('mobile.connRelay')
+                            : ''}
+                      </span>
+                      <ChevronRight size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+
+                  <div className="mobile-settings-group">外观</div>
+                  <div className="mobile-settings-card">
+                    <button
+                      type="button"
+                      className="mobile-settings-card-row"
+                      onClick={() => setTheme(toggleTheme())}
+                    >
+                      <span className="mobile-settings-card-title">主题</span>
+                      <span className="mobile-settings-card-value">
+                        {theme === 'dark' ? '深色' : '浅色'}
+                      </span>
+                    </button>
+                    <div className="mobile-settings-card-row">
+                      <span className="mobile-settings-card-title">字号</span>
+                      <span
+                        className="mobile-model-effort-options"
+                        role="radiogroup"
+                        aria-label="字号"
+                      >
+                        {FONT_SIZE_OPTIONS.map(opt => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            role="radio"
+                            aria-checked={fontSize === opt.value}
+                            className={`mobile-model-effort-option${fontSize === opt.value ? ' is-active' : ''}`}
+                            onClick={() => pickFontSize(opt.value)}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mobile-settings-group">关于</div>
+                  <div className="mobile-settings-card">
+                    <button
+                      type="button"
+                      className="mobile-settings-reset-btn"
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            '确定重置客户端配对？将清除本地配对并断开连接，需重新扫码关联设备',
+                          )
+                        )
+                          return
+                        onDisconnect?.()
+                      }}
+                    >
+                      重置客户端配对
+                    </button>
+                  </div>
+                </>
+              )}
+              {page === 'sessions' && (
+                <>
+                  {/* 会话列表：主视图直接展示（不再子视图）——**按项目文件夹分组**渲染，
+                与桌面 rail 同一返回体 + 同一分组纯函数；点选即切换电脑端视图。
+                执行中/后端守卫锁定时禁用。 */}
+                  <div className="mobile-sess-section">
+                    <div className="mobile-settings-group">{t('sessionRail.projectsTitle')}</div>
+                    {sessGroups.length > 0 ? (
+                      sessGroups.map(group => {
+                        const collapsed = !!sessCollapsed[group.key]
+                        const slice = visibleGroupSessions(
+                          group,
+                          sessLimit,
+                          !!sessExpanded[group.key],
+                        )
+                        return (
+                          <div className="mobile-sess-group" key={group.key || '__ungrouped__'}>
+                            {/* 组头：文件夹名 + 会话数；点击收起/展开整组 */}
+                            <button
+                              type="button"
+                              className="mobile-sess-group-head"
+                              onClick={() =>
+                                setSessCollapsed(m => ({ ...m, [group.key]: !m[group.key] }))
+                              }
+                              aria-expanded={!collapsed}
+                            >
+                              <span
+                                className={`mobile-sess-group-name${
+                                  group.path === null ? ' is-ungrouped' : ''
+                                }`}
+                              >
+                                {group.name || t('sessionRail.ungrouped')}
+                              </span>
+                              <span className="mobile-sess-group-count">
+                                {group.sessions.length}
+                              </span>
+                              {collapsed ? (
+                                <ChevronRight size={14} aria-hidden="true" />
+                              ) : (
+                                <ChevronDown size={14} aria-hidden="true" />
+                              )}
+                            </button>
+                            {!collapsed &&
+                              (group.sessions.length > 0 ? (
+                                <>
+                                  <div className="mobile-sess-list">
+                                    {slice.sessions.map(item => (
+                                      <button
+                                        key={item.id}
+                                        type="button"
+                                        className={[
+                                          'mobile-sess-item',
+                                          item.is_active ? 'is-active' : '',
+                                        ]
+                                          .filter(Boolean)
+                                          .join(' ')}
+                                        disabled={sessLocked}
+                                        onClick={() => {
+                                          onSwitchSession?.(item.id, item.mode)
+                                          // 切会话的意图是「去看这段对话」：切完直接回聊天页
+                                          onPageChange('chat')
+                                        }}
+                                      >
+                                        <span className="mobile-sess-title">
+                                          {item.mode && (
+                                            <span
+                                              className={`mobile-sess-mode mode-${item.mode}`}
+                                              aria-hidden="true"
+                                            >
+                                              {item.mode.toUpperCase()}
+                                            </span>
+                                          )}
+                                          {item.title || item.id}
+                                        </span>
+                                        <span className="mobile-sess-meta">
+                                          {item.is_active ? '当前 · ' : ''}
+                                          {activity.running && !item.is_active
+                                            ? '执行中锁定 · '
+                                            : ''}
+                                          {item.message_count} 条
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                  {/* 折叠行：与桌面同一上限语义（全局 collapsed_limit） */}
+                                  {slice.hiddenCount > 0 && (
+                                    <button
+                                      type="button"
+                                      className="mobile-sess-more"
+                                      onClick={() =>
+                                        setSessExpanded(m => ({ ...m, [group.key]: true }))
+                                      }
+                                    >
+                                      {t('sessionRail.expandMore', String(slice.hiddenCount))}
+                                    </button>
+                                  )}
+                                </>
+                              ) : (
+                                // 空文件夹（书签存在但无会话）：弱提示，组仍显示
+                                <div className="mobile-sess-empty">
+                                  {t('sessionRail.groupEmpty')}
+                                </div>
+                              ))}
+                          </div>
+                        )
+                      })
+                    ) : (
+                      <div className="mobile-sess-empty">{t('sessionRail.emptySessions')}</div>
+                    )}
+                    <div className="mobile-settings-reset-hint">
+                      切换的是电脑端正在显示的对话，两端同步
+                    </div>
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <>
@@ -1127,7 +1171,7 @@ export default function NavBar({
           )}
         </div>
         {/* 子视图底部操作栏：返回（回主视图，放弃未确认选择）+ 确定（提交暂存选择） */}
-        {settingsView !== 'main' && (
+        {subView && (
           <div className="mobile-settings-footer">
             <button
               type="button"
@@ -1147,7 +1191,8 @@ export default function NavBar({
           </div>
         )}
       </div>
-    ) : null
+    )
+  }
 
   /** 新会话弹窗：屏幕中心 modal——选 mode（先选后确定）→「开始」= 切 mode（set_mode 权威源）
    *  + 遥控 /new-chat 广播（桌面 handleNewChat 跟随回 welcome）。与桌面 Ctrl+N 统一语义：
@@ -1430,7 +1475,7 @@ export default function NavBar({
           </div>
           {renderActions()}
         </header>
-        {renderSettings()}
+        {page !== 'chat' && createPortal(renderPage(), document.body)}
       </>
     )
   }
@@ -1459,7 +1504,7 @@ export default function NavBar({
         </div>
         {renderActions()}
       </header>
-      {renderSettings()}
+      {page !== 'chat' && createPortal(renderPage(), document.body)}
       {newChatOpen && renderNewChatModal()}
       {networkOpen && renderNetworkModal()}
     </>

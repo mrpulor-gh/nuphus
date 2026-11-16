@@ -296,6 +296,66 @@ body {
   position: relative;
 }
 
+/* 底部 Tab 高度（含安全区）：页面容器与 Tab 内容区据此让位 */
+:root {
+  --mobile-tabbar-h: calc(50px + env(safe-area-inset-bottom, 0px));
+}
+
+/* 聊天层：Tab 内容区第一屏（TabBar 以上全部高度）；切页只做可访问性隐藏，
+   不卸载——Composer 草稿与滚动位置都是组件内状态。 */
+.mobile-chat-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 底部 TabBar：移动端唯一常驻导航入口。
+   底部安全区由本层承担（Composer 不再重复计 inset）。 */
+.mobile-tabbar {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  height: var(--mobile-tabbar-h);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--m-bg);
+  border-top: 0.5px solid var(--m-separator);
+}
+
+.mobile-tabbar-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--m-fg-secondary);
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 120ms ease;
+}
+
+.mobile-tabbar-item.is-active {
+  color: var(--m-fg);
+}
+
+.mobile-tabbar-label {
+  font-size: 10.5px;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.mobile-tabbar-item.is-active .mobile-tabbar-label {
+  font-weight: 600;
+}
+
+.mobile-tabbar-item:active {
+  color: var(--m-fg);
+}
+
 /* 工作流胶囊悬浮层：覆盖在消息区顶部（导航条下方）。
    pointer-events: none 让胶囊之外的区域点击穿透到消息流；
    胶囊本体 pointer-events: auto 恢复交互。滚动内容从胶囊背后经过 → 毛玻璃可见 */
@@ -344,6 +404,15 @@ body {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   border-radius: 10px;
+}
+
+/* 品牌纯展示：导航入口在底部 Tab，品牌不再可点（无 hover/active 反馈） */
+.mobile-nav-brand.is-static {
+  cursor: default;
+}
+
+.mobile-nav-brand.is-static:active {
+  background: transparent;
 }
 
 .mobile-nav-brand:active {
@@ -1792,7 +1861,8 @@ body {
   z-index: 210;
   flex-shrink: 0;
   padding: 8px 12px;
-  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  /* 底部安全区由 TabBar 承担（Composer 之上还有常驻 Tab），此处不再重复计 inset */
+  padding-bottom: 8px;
   background: var(--m-bg-grouped);
   border-top: 0.5px solid var(--m-separator);
 }
@@ -3614,26 +3684,21 @@ body {
   background: var(--m-fill);
 }
 
-/* 设置/会话抽屉：右侧整面滑出（点击 logo → 设置 打开；跟随主题毛玻璃）
-   高于底部输入栏(210)：右侧全高抽屉不受输入栏遮挡，内容可纵向舒展
-   同级 z-index 时 DOM 靠后的 Composer 会压住弹窗底部（重置按钮不可见） */
-.mobile-settings-sheet {
+/* 主导航页（会话 / 设置）：全屏页面，底部让位给 TabBar。
+   常驻导航目标不是浮层——无遮罩、无滑出动画，切页由底部 Tab 瞬时完成。 */
+.mobile-page {
   position: fixed;
   top: 0;
+  left: 0;
   right: 0;
-  bottom: 0;
-  width: min(90vw, 420px);
+  bottom: var(--mobile-tabbar-h);
   z-index: 220;
-  border-radius: 20px 0 0 20px;
-  background: var(--m-bg-grouped);
-  border-left: 0.5px solid var(--m-separator);
   display: flex;
   flex-direction: column;
   /* header / footer 固定，唯一滚动区为 .mobile-settings-body */
   overflow: hidden;
-  padding: 24px 20px 0;
-  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.2);
-  animation: mobile-drawer-in 240ms cubic-bezier(0.2, 0.8, 0.3, 1);
+  padding: calc(24px + env(safe-area-inset-top, 0px)) 20px 0;
+  background: var(--m-bg-grouped);
 }
 
 /* 内容区：唯一可滚动区域（header/footer 固定不跳动）
@@ -3656,16 +3721,7 @@ body {
   height: 0;
 }
 
-@keyframes mobile-drawer-in {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: none;
-  }
-}
-
-/* ── 设置抽屉「对话」区：分组标题 / 卡片 / 行按钮 / 子面板 ── */
+/* ── 设置页「对话」区：分组标题 / 卡片 / 行按钮 / 子面板 ── */
 
 /* 运行模式卡（模型卡上方）：样式仿模型信息卡——同款反色底 + 18px 圆角 + 舒展内边距。
    手风琴直切：head 点开/收起模式列表，foot 左 desc + 右切换胶囊（复用模型卡 switch）。 */
@@ -4533,13 +4589,6 @@ body {
 /* 未点选/执行中锁定的禁用态（会话视图等）：弱化但可辨识 */
 .mobile-settings-footer-btn:disabled {
   opacity: 0.4;
-}
-
-@supports (backdrop-filter: blur(20px)) {
-  /* 抽屉实底分组色（参考 gemini：浅灰底 + 白色卡片），不做毛玻璃 */
-  .mobile-settings-sheet {
-    background: var(--m-bg-grouped);
-  }
 }
 
 /* 模型配置卡：与 + 面板同款反色轻面板（浮于输入行上方，左右收窄，无遮罩，外部点击关闭） */
