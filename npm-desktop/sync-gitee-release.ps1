@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Sync a Nuphus release to Gitee so domestic users can download from gitee.com directly.
@@ -345,6 +345,18 @@ if (-not $DryRun) {
             } catch { Write-WarnMsg "diag: could not read error body ($($_.Exception.Message))" }
         }
         Remove-Item "$RepoManifest.tmp" -Force -ErrorAction SilentlyContinue
+        # 离线回退：本机 GitHub 直连不可用、只有 SOCKS 跳板时（.NET WebRequest 不支持
+        # socks5），允许使用预先用 curl 取到的权威 latest.json 放在 downloads/<ver>/。
+        # 可信保证不变：signature 仍来自 GitHub 发布版，客户端 minisign 验签照旧。
+        $cachedManifest = Join-Path $Downloads "$Ver\latest.json"
+        if (Test-Path $cachedManifest) {
+            $probe = Get-Content $cachedManifest -Raw | ConvertFrom-Json
+            if ($probe.platforms.'windows-x86_64'.signature) {
+                $authority = $probe
+                $gotManifest = $true
+                Write-Ok "authoritative latest.json v$($authority.version) loaded from local cache"
+            }
+        }
     }
     if (-not $gotManifest) { throw 'could not fetch the authoritative latest.json from the Release API' }
 
