@@ -82,6 +82,13 @@ export default function MessageList({
   const hidden = messages.length - visibleCount
   const visible = hidden > 0 ? messages.slice(hidden) : messages
 
+  // 等待 agent 首个 token 的窗口：最后一条不是 streaming assistant 时，
+  // 消息流里没有任何执行反馈（气泡要等首个 delta / 工具事件才创建）。
+  // 这里用一行「不占消息身份」的指示器补上——不写 messages，因此不进历史、
+  // 不参与折叠、没有 id、也不影响滚动跟随；气泡一创建条件自然为假。
+  const lastMessage = messages[messages.length - 1]
+  const awaitingAgent = !(lastMessage && lastMessage.role === 'assistant' && lastMessage.streaming)
+
   return (
     <div className="mobile-messages" ref={listRef} onScroll={handleScroll}>
       {hidden > 0 && (
@@ -102,7 +109,7 @@ export default function MessageList({
           onRateMessage={onRateMessage}
         />
       ))}
-      {activity.running && messages.length === 0 && (
+      {activity.running && awaitingAgent && (
         <div className="mobile-exec-line mobile-exec-line--global">
           <span className="mobile-exec-line-icon">
             <Loader2 size={12} className="mobile-spin" aria-hidden="true" />
