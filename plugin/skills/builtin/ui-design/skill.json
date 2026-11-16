@@ -1,8 +1,8 @@
 {
   "name": "ui-design",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "displayName": "默认设计语言",
-  "description": "Nuphus 带出项目的默认设计语言：单色 chrome、wash 分层、大圆角、一个主行动。含可直接复制的 tokens.css 与基元 CSS、布局节奏、动效四层时长、文案口径、禁止清单（emoji / 多色状态点 / 非 SVG 图标）与验收项。用户未指定风格且项目无既有设计系统时默认使用。",
+  "description": "Nuphus 带出项目的默认设计语言：单色 chrome、wash 分层、大圆角、一个主行动。含可直接复制的 tokens.css 与基元 CSS、五档间距阶梯（含内外不倒挂判据、常驻区与滚动容器、媒体尺寸、首屏预算）、动效四层时长、文案口径、禁止清单（emoji / 多色状态点 / 非 SVG 图标）与验收项。用户未指定风格且项目无既有设计系统时默认使用。",
   "author": "Nuphus",
   "keywords": [
     "design",

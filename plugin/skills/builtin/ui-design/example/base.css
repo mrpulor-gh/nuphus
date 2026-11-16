@@ -73,3 +73,11 @@ body {
   border-radius: var(--r-xl); background: var(--bg);
   box-shadow: 0 12px 40px rgba(0, 0, 0, .10);
 }
+
+/* 节奏：同层 12 / 语义切换 32；容器 padding 用 --sp-5(20) */
+.stack { display: flex; flex-direction: column; gap: var(--sp-3); }
+.stack.stack-group { gap: var(--sp-7); }
+
+/* 常驻 + 滚动：根两行网格，滚动区自己滚，常驻区不动 */
+.app-shell { display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100%; }
+.app-scroll { min-height: 0; overflow-y: auto; }
