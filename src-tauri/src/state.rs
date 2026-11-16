@@ -373,14 +373,12 @@ impl AppState {
                 mode,
                 started_at_ms,
                 ..
-            } => {
-                if source != "cli" {
-                    *guard = Some(LiveTurn {
-                        mode: mode.clone(),
-                        started_at_ms: started_at_ms.unwrap_or(0),
-                        ..Default::default()
-                    });
-                }
+            } if source != "cli" => {
+                *guard = Some(LiveTurn {
+                    mode: mode.clone(),
+                    started_at_ms: started_at_ms.unwrap_or(0),
+                    ..Default::default()
+                });
             }
             E::LlmTextDelta {
                 text,
