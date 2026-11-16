@@ -1195,16 +1195,10 @@ export default function NavBar({
             </>
           )}
         </div>
-        {/* 子视图底部操作栏：返回（回主视图，放弃未确认选择）+ 确定（提交暂存选择） */}
+        {/* 子视图底部操作栏：只保留「确定」（提交暂存选择）。
+            返回已由 header 左上箭头 + 系统返回键承担，底部不再重复一个返回入口。 */}
         {subView && (
           <div className="mobile-settings-footer">
-            <button
-              type="button"
-              className="mobile-settings-footer-btn is-back"
-              onClick={backToMain}
-            >
-              <ChevronLeft size={16} aria-hidden="true" /> 返回
-            </button>
             <button
               type="button"
               className="mobile-settings-footer-btn is-confirm"
