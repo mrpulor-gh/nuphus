@@ -188,6 +188,19 @@ async function checkAuth(res: Response): Promise<Response> {
   return res
 }
 
+/**
+ * 后端 `state::HistoryMessage` 未加 `rename_all`，执行过程字段以 `trace_items` 下发，
+ * 而前端类型用 `traceItems`。这里做一次归一化，两种命名都接受——否则历史里的
+ * 工具/思考记录在手机上永远是 undefined（重开只剩最终回复）。
+ */
+export function normalizeHistory(raw: unknown): HistoryMessage[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map(item => {
+    const m = item as HistoryMessage & { trace_items?: HistoryMessage['traceItems'] }
+    return { ...m, traceItems: m.traceItems ?? m.trace_items }
+  })
+}
+
 /** 拉取与桌面一致的对话历史（无 agent 时后端返回空列表） */
 export async function fetchHistory(token: string): Promise<HistoryMessage[]> {
   const res = await checkAuth(
@@ -196,7 +209,7 @@ export async function fetchHistory(token: string): Promise<HistoryMessage[]> {
     }),
   )
   if (!res.ok) throw new Error(`history failed: ${res.status}`)
-  return (await res.json()) as HistoryMessage[]
+  return normalizeHistory(await res.json())
 }
 
 /**

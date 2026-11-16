@@ -422,11 +422,12 @@ export default function App() {
   }
 
   /** 与桌面端一致保留面向用户的过程说明；旧 assistant 轮次兼容折叠。
-   *  手机历史仍不加载工具/思考详情，避免重连时重复挂载大型执行面板。 */
+   *  执行过程（traceItems）随历史保留：后端 Session 完整存储并在 /history 下发，
+   *  MessageBubble 以「摘要行 + TraceModal」呈现，不会一次性铺开成大型面板。
+   *  旧实现此处做过 `traceItems: []` 清空（早于后端下发能力），导致重开/重连后
+   *  只剩最终回复、执行过程全部丢失。 */
   function foldHistoryAssistants(msgs: HistoryMessage[]): HistoryMessage[] {
-    const out = foldAssistantHistory(msgs)
-    // 只拉取最终回复：历史 assistant 不带执行过程（traceItems 清空）
-    return out.map(m => (m.role === 'assistant' ? { ...m, traceItems: [] } : m))
+    return foldAssistantHistory(msgs)
   }
 
   // ── 历史拉取（首载与每次 WS 就绪后，补齐断线间隙）──
