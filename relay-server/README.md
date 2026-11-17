@@ -85,13 +85,18 @@ echo "$RELAY_CALLER_TOKEN_VALUE" > ${RELAY_DATA_DIR}/relay_caller.token
 ```json
 {
   "enabled": true,
-  "url": "wss://relay.nuphus.com",
+  "url": "wss://<你的中继域名>",
   "device_id": "<你的设备唯一标识>",
   "token": "<与服务端 RELAY_DEVICE_TOKEN 一致>",
   "caller_token": "<与服务端 RELAY_CALLER_TOKEN 一致>",
-  "public_url": "https://r.nuphus.com"
+  "public_url": "https://<你的隧道域名>"
 }
 ```
+
+> ⚠️ **不要填 `relay.nuphus.com` / `r.nuphus.com`**。当前版本桌面端把这两个官方域名列为拒绝名单
+> （`src-tauri/src/relay_client.rs` 的 `is_official_relay_url` → `retire_official_config`）：一旦命中，
+> 启动时会清空 `enabled` / `url` / `public_url` / `token` / `caller_token`，表现为
+> **「填了地址却一直连不上、配置看起来被重置」**。一律使用你自己的域名。
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
@@ -126,10 +131,41 @@ cargo build --release
 RELAY_PORT=18080 RELAY_TUNNEL_PORT=18081 RELAY_DATA_DIR=/etc/nuphus-relay ./target/release/relay-server
 ```
 
-**TLS 终结**（生产必做）：`relay-server` 为 http/ws，需在反向代理（Nginx / Caddy）终结 TLS 并转发到 `18080` / `18081`：
+**TLS 终结**（生产必做）：`relay-server` 为 http/ws，需在反向代理（Nginx / Caddy）终结 TLS 并转发到 `18080` / `18081`。两个端口分工不同，**分流写错会直接导致手机端白屏**：
 
-- `wss://relay.nuphus.com` → 代理到 `127.0.0.1:18080`
-- `https://r.nuphus.com` → 代理到 `127.0.0.1:18081`
+| 端口 | 承载路径 | 用途 |
+|------|---------|------|
+| `18080` | `/health` `/task` `/admin/*` `/ws/device` `/ws/tunnel` | 健康检查、任务投递、管理接口、两条 WS 通道 |
+| `18081` | 其余全部 | 手机端页面与其静态资源（由桌面的 `mobile_server` 提供） |
+
+**方案 A：单域名按路径分流（推荐，只需一个证书）**
+
+```caddyfile
+<你的域名> {
+	# 主服务
+	@main path /health /task /admin/* /ws/device /ws/tunnel
+	handle @main {
+		reverse_proxy 127.0.0.1:18080
+	}
+
+	# 其余全部交给隧道口：手机端 HTML 与静态资源
+	handle {
+		reverse_proxy 127.0.0.1:18081
+	}
+
+	# Safari 会优先尝试 HTTP/3（QUIC）；跨境 UDP 丢包时会长时间挂起而不回退 TCP，
+	# 表现为一直白屏/转圈。关掉 Alt-Svc 通告，强制走 TCP。
+	header -Alt-Svc
+}
+```
+
+**方案 B：双域名各占一个端口**
+
+- `wss://relay.<你的域名>` → 代理到 `127.0.0.1:18080`
+- `https://r.<你的域名>` → 代理到 `127.0.0.1:18081`
+
+> 用方案 B 时 `public_url` 填 `https://r.<你的域名>`；用方案 A 时 `url` 与 `public_url` 可以同域，隧道口由路径分流兜住。
+> 无论哪种方案，代理都必须透传 WebSocket 升级（Caddy 默认透传；Nginx 需显式写 `proxy_set_header Upgrade` / `Connection` 并 `proxy_http_version 1.1`）。
 
 ---
 
@@ -139,7 +175,7 @@ RELAY_PORT=18080 RELAY_TUNNEL_PORT=18081 RELAY_DATA_DIR=/etc/nuphus-relay ./targ
 
 ```bash
 # 健康检查：应返回 {"ok":true}
-curl https://relay.nuphus.com/health
+curl https://<你的域名>/health
 
 # 确认监听端口
 ss -tlnp | grep -E '18080|18081'
@@ -152,9 +188,25 @@ ss -tlnp | grep -E '18080|18081'
 
 ### 5.3 手机端自检
 
-1. 手机访问隧道公网入口（如 `https://r.nuphus.com`）——**这是中继线路的关键**，必须先可达。
-2. `/relay-hint` 返回 `enabled: true`（仅在桌面端中继配置完整且开启时）。
-3. 默认走中继；同一 WiFi 下可经 `lan_url` 直连（仅作同网兜底，**不能替代中继配置**）。
+**入口地址**用桌面端「设置 → 移动端 → 自定义服务端 → 复制远程链接」给出的那一条，不要手抄局域网
+`http://192.168.x.x:18772`——那是同一 WiFi 下的兜底直连，离开 WiFi 即不可达，与中继入口不是同一个东西。
+
+按顺序验证，哪一步不通就停在那一步排查：
+
+| # | 检查 | 期望 |
+|---|------|------|
+| 1 | `curl https://<你的域名>/health` | `{"ok":true}` |
+| 2 | `curl -H "X-Mobile-Token: <手机令牌>" https://<你的域名>/identity` | 200 + 身份显示名 JSON（令牌错误则为 401） |
+| 3 | 桌面端 `/relay-hint` | `enabled: true`（仅当桌面端中继配置完整且已开启） |
+| 4 | 打开入口地址，看 HTML 源码 | 资源路径已被隧道改写成 `/d/<device_id>/…` |
+| 5 | 静态资源响应头 | 200，`Content-Type: text/javascript; charset=utf-8` |
+| 6 | 中继服务端日志 | 出现 `device online`、`tunnel link online`（101 升级） |
+
+> 第 4、5 步失败（页面白屏、资源 404）先回第四节核对分流规则：手机端静态资源由 `18081` 提供，
+> 若整个域名只转到了 `18080`，HTML 能出来但 JS 全 404，表现就是白屏。
+> 第 6 步失败说明桌面端没连上中继，查 `relay_client.json` 与桌面端中继状态，不在手机端。
+
+默认走中继；同一 WiFi 下可经 `lan_url` 直连（仅作同网兜底，**不能替代中继配置**）。
 
 ### 5.4 端到端验证
 
@@ -170,6 +222,9 @@ ss -tlnp | grep -E '18080|18081'
 - **令牌隔离**：`RELAY_DEVICE_TOKEN`（设备通道凭据）永不下发手机端；`RELAY_CALLER_TOKEN` 可经中继下发手机端外网发送。
 - **防裸奔**：任一 token 未配置则拒绝启动。
 - **速率限制**：HTTP 按 IP 限速；隧道按 IP / 全局并发上限。
+- **反向代理日志会泄露手机令牌**：手机端用 `X-Mobile-Token` 头鉴权，Nginx / Caddy 默认访问日志会把它
+  原文写进文件（实测 Caddy 2.6 的 `log` 无法按字段剔除单个请求头）。需排查时只记路径与状态码，
+  或者干脆对该站点关闭访问日志——日志一旦可读，等于拿到手机端凭据。
 
 ---
 
@@ -181,6 +236,11 @@ ss -tlnp | grep -E '18080|18081'
 | 手机能访问但发不了消息 | `relay_client.json` `caller_token` 与服务端不一致，或桌面中继未启用 |
 | 局域网正常、异地不通 | 检查桌面端中继是否 `connected`、`public_url` 是否可达 |
 | `/health` 不通 | 反向代理未转发 443 → `18080`，或 `relay-server` 未运行 |
+| 手机打开白屏 / 一直转圈 | ① 确认用的是「复制远程链接」的地址而非局域网 `192.168.x.x`；② 回第四节核对分流，静态资源必须走 `18081`；③ `curl https://<你的域名>/health` 是否 200 |
+| 页面能开、JS 全 404 | 分流缺失：域名只转到了 `18080`，而 HTML 里的 `/d/<device_id>/…` 由 `18081` 提供 |
+| Safari 白屏、微信端正常 | 先排除地址差异（两次打开的是否同一入口）；再在反代关掉 HTTP/3 通告（`header -Alt-Svc`）强制 TCP 后复测——Safari 会优先尝试 QUIC，跨境 UDP 丢包时容易挂起而不回退 |
+| 填了地址但配置像被重置 | `url` / `public_url` 用了 `relay.nuphus.com` 或 `r.nuphus.com`，被客户端清退（见 3.3 警告） |
+| 日志里出现 `X-Mobile-Token` 原文 | 关闭该站点的访问日志（见第六节） |
 
 ---
 
