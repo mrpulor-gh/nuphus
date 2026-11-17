@@ -796,14 +796,15 @@ impl WorkflowAgent {
             }
 
             // ── LLM call with real-time streaming ──
+            let mut timing = StreamTiming::default();
             let events = self
-                .llm_stream_with_streaming(cancel_flag, &text_boundary)
+                .llm_stream_with_streaming(cancel_flag, &text_boundary, &mut timing)
                 .await?;
             if cancel_flag.load(Ordering::SeqCst) {
                 continue; // Report cancellation at the next loop boundary; do not dispatch.
             }
 
-            let assistant_blocks = self.process_events(events);
+            let assistant_blocks = self.process_events(events, &timing);
 
             // Text and reasoning already emitted in real-time during streaming
             // (TextDelta via process_text_delta, Reasoning via direct forward).
@@ -1506,6 +1507,7 @@ impl WorkflowAgent {
         &mut self,
         cancel_flag: &AtomicBool,
         text_boundary: &crate::agent::common::TextBoundary,
+        timing: &mut StreamTiming,
     ) -> crate::Result<Vec<AssistantEvent>> {
         const MAX_RETRIES: u32 = 2;
 
@@ -1529,6 +1531,11 @@ impl WorkflowAgent {
         let base = self.build_system_prompt();
 
         for attempt in 0..=MAX_RETRIES {
+            // 计时起点：每次 attempt 重置（重试退避的等待不计入解码速度）
+            let attempt_start = std::time::Instant::now();
+            let first_token_at: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(None));
+            let first_token_for_stream = first_token_at.clone();
             // Push reminders as internal user message to keep system_prompt stable
             // （与 react_loop.rs 同一写法：internal 标记让前端历史过滤，不显示为用户气泡）
             if let Some(rem) = self.reminders.format_for_prompt() {
@@ -1574,6 +1581,13 @@ impl WorkflowAgent {
             let iteration_break = iteration_break.clone();
             let emitter = Box::new(move |event: crate::api::AssistantEvent| {
                 if let crate::api::AssistantEvent::TextDelta(text) = &event {
+                    // 首个 text delta 到达时刻 = TTFT 终点（reasoning/思考不算，与
+                    // react_loop 同口径：只认正文首 token）
+                    if let Ok(mut slot) = first_token_for_stream.lock() {
+                        if slot.is_none() {
+                            *slot = Some(std::time::Instant::now());
+                        }
+                    }
                     // 跨迭代边界：本迭代首个 TextDelta 前补一个换行
                     iteration_break.before_delta(stream_emitter.as_deref(), false);
                     // Single routing entry: process_text_delta (think split +
@@ -1614,6 +1628,13 @@ impl WorkflowAgent {
                 .await
             {
                 Ok(()) => {
+                    // 计时写回：供 process_events 计算 speed / ttft
+                    timing.gen_elapsed = Some(attempt_start.elapsed());
+                    timing.ttft = first_token_at
+                        .lock()
+                        .ok()
+                        .and_then(|guard| *guard)
+                        .map(|at| at.saturating_duration_since(attempt_start));
                     return Ok(std::mem::take(
                         &mut *collected.lock().unwrap_or_else(|e| e.into_inner()),
                     ))
@@ -1654,7 +1675,7 @@ impl WorkflowAgent {
     }
 
     /// Process streaming events: extract blocks + emit token usage events
-    fn process_events(&mut self, events: Vec<AssistantEvent>) -> Vec<ContentBlock> {
+    fn process_events(&mut self, events: Vec<AssistantEvent>, timing: &StreamTiming) -> Vec<ContentBlock> {
         let content_tool_tags = crate::config::registry::ProviderRegistry::builtin()
             .get(self.llm.provider_kind().as_str())
             .map(|p| p.quirks().content_tool_tags)
@@ -1663,17 +1684,43 @@ impl WorkflowAgent {
         if let Some((input, output)) = &result.usage {
             self.session.update_api_input_tokens(*input as u64);
             self.session.update_api_output_tokens(*output as u64);
+            // 解码速度 / 首 token 延迟：算法与 react_loop.rs:1015-1035 同口径。
+            // 此前 workflow 路径两者恒为 None，ctx 弹窗的 speed / ttft 两行永久缺失。
+            let gen_tps = match (timing.gen_elapsed, timing.ttft) {
+                (Some(total), Some(ttft)) => {
+                    let decode = total.saturating_sub(ttft);
+                    let secs = decode.as_secs_f64();
+                    if secs > f64::EPSILON {
+                        Some(*output as f64 / secs)
+                    } else {
+                        None
+                    }
+                }
+                (Some(total), None) => {
+                    let secs = total.as_secs_f64();
+                    if secs > f64::EPSILON {
+                        Some(*output as f64 / secs)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            let ttft_ms = timing.ttft.map(|d| d.as_secs_f64() * 1000.0);
             // Per-call consumption for exec tracking (shows "XX tok" in status bar)
+            // source 必须是 "exec"：前端 useEvents 只吸收 main / exec 两个源，
+            // 旧值 "workflow" 被直接丢弃 → ctx 弹窗的缓存 / 速度 / 首字整组无读数。
             self.emit(NuphusEvent::TokenUsage {
                 input_tokens: *input,
                 output_tokens: *output,
                 cache_hit_tokens: result.cache_hit_tokens,
-                source: "workflow".to_string(),
-                gen_tps: None,
-                ttft_ms: None,
+                source: "exec".to_string(),
+                gen_tps,
+                ttft_ms,
             });
             // Cumulative session usage for context bar (like Leader's "main" source)
             // 同 Leader：分母用官方口径占用（input+output），不用字符估算。
+            // main 源只承载上下文占用，速度 / 首字恒 None（与 react_loop 一致）。
             self.emit(NuphusEvent::TokenUsage {
                 input_tokens: self.session.context_occupancy() as u32,
                 output_tokens: 0,
@@ -2098,4 +2145,16 @@ mod convergence_tests {
             "WorkflowAgent 迭代上限必须与全局单一来源一致，不得出现第二套数字"
         );
     }
+}
+
+/// 一次 LLM 调用的用时指标：补齐 workflow 路径 → ctx 弹窗的 speed / ttft 两行。
+///
+/// 口径与 `react_loop.rs:663-780` 一致：解码段 = 首个 token → 流结束，重试按最终
+/// 成功的那次 attempt 计（每次 attempt 重置计时，避免退避等待被算进解码速度）。
+#[derive(Default)]
+struct StreamTiming {
+    /// 本次 attempt 从请求发出到流结束的总耗时
+    gen_elapsed: Option<std::time::Duration>,
+    /// 请求发出 → 首个 token 的延迟
+    ttft: Option<std::time::Duration>,
 }
