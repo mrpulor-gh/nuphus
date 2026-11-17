@@ -1637,7 +1637,7 @@ impl WorkflowAgent {
                         .map(|at| at.saturating_duration_since(attempt_start));
                     return Ok(std::mem::take(
                         &mut *collected.lock().unwrap_or_else(|e| e.into_inner()),
-                    ))
+                    ));
                 }
                 Err(e) => {
                     let err_str = e.to_string();
@@ -1675,7 +1675,11 @@ impl WorkflowAgent {
     }
 
     /// Process streaming events: extract blocks + emit token usage events
-    fn process_events(&mut self, events: Vec<AssistantEvent>, timing: &StreamTiming) -> Vec<ContentBlock> {
+    fn process_events(
+        &mut self,
+        events: Vec<AssistantEvent>,
+        timing: &StreamTiming,
+    ) -> Vec<ContentBlock> {
         let content_tool_tags = crate::config::registry::ProviderRegistry::builtin()
             .get(self.llm.provider_kind().as_str())
             .map(|p| p.quirks().content_tool_tags)
