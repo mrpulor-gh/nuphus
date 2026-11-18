@@ -295,109 +295,30 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 
 ## Acknowledgements
 
-### v1.1.3 Contributors
+Thanks to everyone who makes Nuphus better. Avatars come from GitHub — click any of them to open the profile:
 
-This release has no community pull requests; all changes were made by the maintainer.
+<p align="center">
+  <a href="https://github.com/yuansui486"><img src="https://github.com/yuansui486.png?size=96" width="52" height="52" alt="yuansui486"></a>
+  <a href="https://github.com/Steooenwolf-666"><img src="https://github.com/Steooenwolf-666.png?size=96" width="52" height="52" alt="Steooenwolf-666"></a>
+  <a href="https://github.com/fouyzjl"><img src="https://github.com/fouyzjl.png?size=96" width="52" height="52" alt="fouyzjl"></a>
+  <a href="https://github.com/zhoupeiyu515-ui"><img src="https://github.com/zhoupeiyu515-ui.png?size=96" width="52" height="52" alt="zhoupeiyu515-ui"></a>
+  <a href="https://github.com/ZYT-ZhangYunTao19941116"><img src="https://github.com/ZYT-ZhangYunTao19941116.png?size=96" width="52" height="52" alt="ZYT-ZhangYunTao19941116"></a>
+  <a href="https://github.com/jiangdingwei123-afk"><img src="https://github.com/jiangdingwei123-afk.png?size=96" width="52" height="52" alt="jiangdingwei123-afk"></a>
+  <a href="https://github.com/mrpulor-gh"><img src="https://github.com/mrpulor-gh.png?size=96" width="52" height="52" alt="mrpulor-gh"></a>
+</p>
 
-### v1.0.0 Contributors
+### Latest release · v1.5.0 (2026-11-16)
 
-No external pull requests were merged in this release; all changes were made by the maintainer.
+| Contributor | Commit | Summary |
+|-------------|--------|---------|
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`0a618938`](https://github.com/mrpulor-gh/nuphus/commit/0a618938) | Reasoning-effort selection on mobile: the model subpage shows and saves per-provider effort, sharing the backend model-projection path with desktop |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`3dd837b3`](https://github.com/mrpulor-gh/nuphus/commit/3dd837b3) | Mobile navigation rebuilt as bottom tabs (Chat / Sessions / Settings); the brand area is display-only, and the right drawer plus swipe-to-close gesture are gone |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`363955b6`](https://github.com/mrpulor-gh/nuphus/commit/363955b6) | Mobile session list aligned with the desktop session workbench: single-row layout, single-letter mode block, relative time and current badge |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`e05885ce`](https://github.com/mrpulor-gh/nuphus/commit/e05885ce) | Fixes the lost execution trace after reopening on mobile: history no longer clears the trace, and backend `trace_items` field names are normalized |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`0ba437c3`](https://github.com/mrpulor-gh/nuphus/commit/0ba437c3) | Resumes the in-flight turn after a mobile reconnect: the backend accumulates a snapshot at the event outlet and `/agent-status` serves `liveTurn` for streaming bubbles |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`ca27c1dd`](https://github.com/mrpulor-gh/nuphus/commit/ca27c1dd) | First-token waiting indicator on mobile: a line that owns no message identity and disappears once the bubble is created |
 
-### v0.2.31 Contributors
-
-Thanks to the community contributors who submitted pull requests in this release:
-
-| Contributor | PR | Summary |
-|--------|-----|------|
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#107](https://github.com/mrpulor-gh/nuphus/pull/107) | ChatGPT plan sign-in and Responses inference: generic OAuth, secure credential storage, per-model protocol routing and request constraints |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#108](https://github.com/mrpulor-gh/nuphus/pull/108) | Fix IPC parameter casing for execution reviews, inline config and new sessions (top-level camelCase) |
-
-### v0.2.30 Contributors
-
-No external pull requests were merged in this release; all changes were made by the maintainer.
-
-### v0.2.29 Contributors
-
-Thanks to the community contributors who submitted pull requests in this release:
-
-| Contributor | PR | Summary |
-|-------------|-----|---------|
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#105](https://github.com/mrpulor-gh/nuphus/pull/105) | Fixes session-row hover overlap and stray button hits, restores the ModelsPage test baseline (adds the missing getVisionResolution mock) |
-
-### v0.2.28 Contributors
-
-Thanks to the community contributors who submitted pull requests in this release:
-
-| Contributor | PR | Summary |
-|-------------|-----|---------|
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#104](https://github.com/mrpulor-gh/nuphus/pull/104) | Adds quick-filter chips for popular models and multi-keyword (space-OR) filtering |
-
-### v0.2.24 Contributors
-
-Thanks to the community contributors who submitted pull requests in this release:
-
-| Contributor | PR | Summary |
-|-------------|-----|---------|
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#84](https://github.com/mrpulor-gh/nuphus/pull/84) | Adds the mobile server / relay threat model and accepted limits to SECURITY.md |
-| [@yuansui486](https://github.com/yuansui486) | [#87](https://github.com/mrpulor-gh/nuphus/pull/87) | Fixes Markdown rendering for external data points (MarkdownInline exported for reuse) |
-| [@yuansui486](https://github.com/yuansui486) | [#88](https://github.com/mrpulor-gh/nuphus/pull/88) | Clarifies model connection success feedback and moves model capability probing off the switch path |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#91](https://github.com/mrpulor-gh/nuphus/pull/91) | Correctly propagates desktop input and submit-hotkey failures in the external-Agent dispatch sequence |
-
-### v0.2.23 Contributors
-
-Thanks to the community contributors who submitted pull requests in this release:
-
-| Contributor | PR | Summary |
-|-------------|-----|---------|
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#67](https://github.com/mrpulor-gh/nuphus/pull/67) | Keep monthly 29–31 day schedules when re-editing a workflow |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#70](https://github.com/mrpulor-gh/nuphus/pull/70) | Show the original path when a mobile image fails to decode |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#71](https://github.com/mrpulor-gh/nuphus/pull/71) | Fix loop variable scope check when moving canvas steps |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#72](https://github.com/mrpulor-gh/nuphus/pull/72) | Stabilize canvas draft and session snapshot tests |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#73](https://github.com/mrpulor-gh/nuphus/pull/73) | Protect external agent task state and preview the latest reported run |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#74](https://github.com/mrpulor-gh/nuphus/pull/74) | Add a non-sensitive run parameter scheme for workflows |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#75](https://github.com/mrpulor-gh/nuphus/pull/75) | Retry failed images in place on mobile |
-| [@fouyzjl](https://github.com/fouyzjl) | [#79](https://github.com/mrpulor-gh/nuphus/pull/79) | Persist base_url in switch_model so an edited endpoint no longer reverts |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#80](https://github.com/mrpulor-gh/nuphus/pull/80) | Expand only the last conversation's project folder on startup, and fix submenu clipping |
-
-### v0.2.22 Contributors
-
-Thanks to the community contributors who submitted pull requests in this release:
-
-| Contributor | PR | Summary |
-|-------------|-----|---------|
-| [@yuansui486](https://github.com/yuansui486) | [#65](https://github.com/mrpulor-gh/nuphus/pull/65) | Improve workflow node debugging, run evidence and canvas editing |
-
-### v0.2.21 Contributors
-
-Thanks to the community contributors who submitted pull requests in this release:
-
-| Contributor | PR | Summary |
-|-------------|-----|---------|
-| [@yuansui486](https://github.com/yuansui486) | [#58](https://github.com/mrpulor-gh/nuphus/pull/58) | Improve cross-platform desktop execution reliability and workflow progress reporting |
-| [@yuansui486](https://github.com/yuansui486) | [#59](https://github.com/mrpulor-gh/nuphus/pull/59) | Fix canvas workstation window dragging; add a prototype light/dark toggle |
-| [@yuansui486](https://github.com/yuansui486) | [#61](https://github.com/mrpulor-gh/nuphus/pull/61) | Refine workflow node forms, variable selection and canvas layout |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#63](https://github.com/mrpulor-gh/nuphus/pull/63) | Add a TypeSafe console link to the enhanced-judgement model API key row |
-
-### v0.2.20 Contributors
-
-Thanks to the community contributors who submitted pull requests in this release:
-
-| Contributor | PR | Summary |
-|-------------|-----|---------|
-| [@yuansui486](https://github.com/yuansui486) | [#56](https://github.com/mrpulor-gh/nuphus/pull/56) | Improve cross-platform target binding, semantic observation and stable replay |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#57](https://github.com/mrpulor-gh/nuphus/pull/57) | View desktop-local images on mobile: new /file endpoint with inline rendering |
-
-### v0.2.19 Contributors
-
-Thanks to the community contributors who submitted pull requests in this release:
-
-| Contributor | PR | Summary |
-|-------------|-----|---------|
-| [@yuansui486](https://github.com/yuansui486) | [#52](https://github.com/mrpulor-gh/nuphus/pull/52) | Semantic desktop automation foundation (UIA/Accessibility): observation, bounded candidates, pre/post execution verification |
-| [@yuansui486](https://github.com/yuansui486) | [#54](https://github.com/mrpulor-gh/nuphus/pull/54) | Enhanced judgement model: standalone configuration with structured selection from local bounded candidates |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#50](https://github.com/mrpulor-gh/nuphus/pull/50) | Harden log rotation: rename failures no longer lose history |
-
-Contributors of earlier releases are recorded in [CHANGELOG.md](CHANGELOG.md).
+Only the latest release is kept here — each release replaces the previous contribution list. Earlier records live in [CHANGELOG.md](CHANGELOG.md) and the in-app GitHub contributors page.
 
 ## License
 

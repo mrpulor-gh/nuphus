@@ -310,130 +310,30 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 
 ## 致谢
 
-### v1.3.0 贡献者
+感谢每一位让 Nuphus 变得更好的人。头像取自 GitHub，点击直达主页：
 
-感谢本版本提交 Pull Request 的社区贡献者：
+<p align="center">
+  <a href="https://github.com/yuansui486"><img src="https://github.com/yuansui486.png?size=96" width="52" height="52" alt="yuansui486"></a>
+  <a href="https://github.com/Steooenwolf-666"><img src="https://github.com/Steooenwolf-666.png?size=96" width="52" height="52" alt="Steooenwolf-666"></a>
+  <a href="https://github.com/fouyzjl"><img src="https://github.com/fouyzjl.png?size=96" width="52" height="52" alt="fouyzjl"></a>
+  <a href="https://github.com/zhoupeiyu515-ui"><img src="https://github.com/zhoupeiyu515-ui.png?size=96" width="52" height="52" alt="zhoupeiyu515-ui"></a>
+  <a href="https://github.com/ZYT-ZhangYunTao19941116"><img src="https://github.com/ZYT-ZhangYunTao19941116.png?size=96" width="52" height="52" alt="ZYT-ZhangYunTao19941116"></a>
+  <a href="https://github.com/jiangdingwei123-afk"><img src="https://github.com/jiangdingwei123-afk.png?size=96" width="52" height="52" alt="jiangdingwei123-afk"></a>
+  <a href="https://github.com/mrpulor-gh"><img src="https://github.com/mrpulor-gh.png?size=96" width="52" height="52" alt="mrpulor-gh"></a>
+</p>
 
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#121](https://github.com/mrpulor-gh/nuphus/pull/121) | 外观浮窗三处修复：新建主题不再继承上一份背景图、消息气泡默认 60% 半透明、改名框随浮窗展开拿回焦点 |
+### 最新版本 · v1.5.0（2026-11-16）
 
-其余变更由维护者完成。
+| 贡献者 | 提交 | 内容 |
+|--------|------|------|
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`0a618938`](https://github.com/mrpulor-gh/nuphus/commit/0a618938) | 移动端支持推理强度选择：模型子页按服务商展示并保存 reasoning effort，后端模型投影与写入口与桌面端共用 |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`3dd837b3`](https://github.com/mrpulor-gh/nuphus/commit/3dd837b3) | 移动端导航重构为底部 Tab（聊天 / 会话 / 设置），品牌区恢复纯展示，右侧抽屉与右滑关闭手势移除 |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`363955b6`](https://github.com/mrpulor-gh/nuphus/commit/363955b6) | 移动端会话列表对齐桌面会话工作台：单行版式、模式单字母方块、行尾相对时间与当前徽标 |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`e05885ce`](https://github.com/mrpulor-gh/nuphus/commit/e05885ce) | 修复移动端重开丢失执行过程：历史不再清空执行轨迹，并归一化后端 `trace_items` 字段名 |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`0ba437c3`](https://github.com/mrpulor-gh/nuphus/commit/0ba437c3) | 移动端执行中重连恢复当前轮：后端在事件出口累积快照，`/agent-status` 下发 `liveTurn` 供流式气泡续写 |
+| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`ca27c1dd`](https://github.com/mrpulor-gh/nuphus/commit/ca27c1dd) | 移动端首 token 等待指示：一行不占消息身份的等待提示，气泡创建后自动消失 |
 
-### v1.1.1 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@ZYT-ZhangYunTao19941116](https://github.com/ZYT-ZhangYunTao19941116) | [#114](https://github.com/mrpulor-gh/nuphus/pull/114) | 知识库检索按关键词拆分并采用严格 AND 语义（多关键词须全部命中，单关键词行为不变） |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#115](https://github.com/mrpulor-gh/nuphus/pull/115) | ego lite 外部 CDP 浏览器识别（`ego.exe` 精确匹配 + 名称推断 + 双安装路径覆盖） |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#116](https://github.com/mrpulor-gh/nuphus/pull/116) | 切换主题后背景图残留修复（预设卡无条件回退 + 异步解析序号守卫 + HUD 快捷切主题回退） |
-
-其余变更由维护者完成。
-
-### v1.1.0 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#110](https://github.com/mrpulor-gh/nuphus/pull/110) | 启动自动检查新版本并提示用户点击更新（顶部提示条 + 手动更新页共用状态，任务执行期间延迟安装） |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#112](https://github.com/mrpulor-gh/nuphus/pull/112) | 外观滑块步进改 1% + 每个参数行内「恢复默认」（只回退未保存草稿，不碰已保存主题） |
-
-其余变更由维护者完成。
-
-### v0.2.31 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#107](https://github.com/mrpulor-gh/nuphus/pull/107) | ChatGPT 套餐登录与 Responses 推理：通用 OAuth、凭据安全存储、逐模型协议路由与请求约束 |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#108](https://github.com/mrpulor-gh/nuphus/pull/108) | 修复执行点评、内联配置与新会话的 IPC 参数（顶层统一 camelCase） |
-
-### v0.2.29 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#105](https://github.com/mrpulor-gh/nuphus/pull/105) | 修复会话行 hover 动画标签重叠、按钮误触，并恢复 ModelsPage 测试基线（补 mock 缺失的 getVisionResolution） |
-
-### v0.2.28 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#104](https://github.com/mrpulor-gh/nuphus/pull/104) | 热门模型快捷 chip + 筛选框多关键词（空格 OR） |
-
-### v0.2.24 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#84](https://github.com/mrpulor-gh/nuphus/pull/84) | 补 mobile server / relay 威胁模型与已接受限制，写入 SECURITY.md |
-| [@yuansui486](https://github.com/yuansui486) | [#87](https://github.com/mrpulor-gh/nuphus/pull/87) | 修复外部数据点的 Markdown 渲染（MarkdownInline 导出供复用） |
-| [@yuansui486](https://github.com/yuansui486) | [#88](https://github.com/mrpulor-gh/nuphus/pull/88) | 明确模型连接成功反馈，并把模型能力探测移到后台不再阻塞切换 |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#91](https://github.com/mrpulor-gh/nuphus/pull/91) | 外部 Agent 投递序列正确传递桌面输入与提交快捷键的失败 |
-
-### v0.2.23 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#67](https://github.com/mrpulor-gh/nuphus/pull/67) | 保留重新编辑时每月 29–31 日的定时规则 |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#70](https://github.com/mrpulor-gh/nuphus/pull/70) | 手机端图片解码失败时显示原始路径 |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#71](https://github.com/mrpulor-gh/nuphus/pull/71) | 修正移动画布步骤时的循环变量作用域判断 |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#72](https://github.com/mrpulor-gh/nuphus/pull/72) | 稳定画布草稿与会话快照测试 |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#73](https://github.com/mrpulor-gh/nuphus/pull/73) | 保护外部 Agent 任务状态并支持最近上报报告预览 |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#74](https://github.com/mrpulor-gh/nuphus/pull/74) | 工作流新增非敏感运行参数方案 |
-| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#75](https://github.com/mrpulor-gh/nuphus/pull/75) | 手机端支持失败图片就地重新加载 |
-| [@fouyzjl](https://github.com/fouyzjl) | [#79](https://github.com/mrpulor-gh/nuphus/pull/79) | switch_model 持久化 base_url，修复"改了调用地址又回退" |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#80](https://github.com/mrpulor-gh/nuphus/pull/80) | 会话工作台启动只展开上次对话所在文件夹，并修好子菜单被抽屉裁切 |
-
-### v0.2.22 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@yuansui486](https://github.com/yuansui486) | [#65](https://github.com/mrpulor-gh/nuphus/pull/65) | 完善工作流节点调试、运行证据与画布编辑体验 |
-
-### v0.2.21 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@yuansui486](https://github.com/yuansui486) | [#58](https://github.com/mrpulor-gh/nuphus/pull/58) | 完善跨平台桌面执行可靠性与工作流进度沟通 |
-| [@yuansui486](https://github.com/yuansui486) | [#59](https://github.com/mrpulor-gh/nuphus/pull/59) | 修复画布工作台窗口拖动并增加原型明暗切换 |
-| [@yuansui486](https://github.com/yuansui486) | [#61](https://github.com/mrpulor-gh/nuphus/pull/61) | 优化工作流节点表单、变量选择与画布布局 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#63](https://github.com/mrpulor-gh/nuphus/pull/63) | 增强判断模型 API Key 行增加 TypeSafe 控制台外链 |
-
-### v0.2.20 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@yuansui486](https://github.com/yuansui486) | [#56](https://github.com/mrpulor-gh/nuphus/pull/56) | 完善跨平台目标绑定、语义观察与稳定回放 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#57](https://github.com/mrpulor-gh/nuphus/pull/57) | 手机端可查看电脑本地图片：新增 /file 端点与内联渲染 |
-
-### v0.2.19 贡献者
-
-感谢本版本提交 Pull Request 的社区贡献者：
-
-| 贡献者 | PR | 内容 |
-|--------|-----|------|
-| [@yuansui486](https://github.com/yuansui486) | [#52](https://github.com/mrpulor-gh/nuphus/pull/52) | UIA/Accessibility 语义桌面自动化基础层：语义观察、有限候选与执行前后复核 |
-| [@yuansui486](https://github.com/yuansui486) | [#54](https://github.com/mrpulor-gh/nuphus/pull/54) | 增强判断模型：独立配置 + 从本地有限候选中做结构化选择 |
-| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#50](https://github.com/mrpulor-gh/nuphus/pull/50) | 日志轮转加固：改名失败不再丢历史 |
-
-更早版本的贡献者记录见 [CHANGELOG.md](CHANGELOG.md)。
+每次发版只保留最近一版的贡献，旧版内容由新版本替换；更早的记录见 [CHANGELOG.md](CHANGELOG.md) 与「设置 → GitHub 贡献者」页。
 
 ## 许可
 
