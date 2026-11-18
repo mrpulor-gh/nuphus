@@ -203,21 +203,12 @@ cargo clean
 
 ### 使用 ChatGPT 套餐（预览）
 
-在「设置 → 模型 → ChatGPT」点击 **Continue with ChatGPT**，在系统浏览器完成账号/工作区选择并授权使用套餐额度，然后选择该账号返回的模型。可添加多个账号/工作区；重新登录复用已登记的 Client ID。
+在「设置 → 模型 → ChatGPT」点击 **Continue with ChatGPT**，在系统浏览器完成账号授权，即可用套餐额度驱动 Agent。可添加多个账号/工作区；支持图片的模型可在卡片上单独开启视觉输入。
 
-需要发送截图或图片时，在对应模型旁开启「视觉输入」（仅为确认支持图片的模型开启）。该设置按账号与模型分别保存，刷新模型目录后仍然保留。
-
-- 此连接使用 ChatGPT 套餐的共享用量；API Key 连接独立计费。模型和额度以账号、工作区及官方接口为准，失败时不会自动切换至 API 计费。
-- 支持 Nuphus 原有 Agent Runtime、客户端函数工具和模型支持的图片输入。不依赖 Codex CLI，也不读取其他应用的登录凭据。音频、图像生成及托管工具仍使用各自的连接。
-- 点击「查看 ChatGPT 用量」进入账号设置。「退出登录」会尝试撤销会话并清除本地令牌；如无法确认远端撤销，界面会提示在 ChatGPT 设置中断开此应用。
-- 授权回调仅监听 `127.0.0.1`，校验 PKCE、state、ID-token 签名/身份/nonce 及套餐授权范围。令牌独立保存在配置目录的 `chatgpt-accounts.json`，不进入前端或普通 provider 配置。Windows 使用 DPAPI；Unix 使用 `0600` 权限与原子写入。**请勿分享、提交或将该凭据文件加入诊断包。**
-- 每次推理前读取并按需刷新令牌，使用文件锁防止并发刷新覆盖。退出登录阻止后续请求；已经发送的请求可能仍会完成。
-- 本接入采用官方预览接口要求：`store:false`、流式 Responses、developer 消息与 namespaced function tools；此连接不发送温度和输出 Token 上限。上下文窗口和模态能力不按模型名称猜测。
-- 官方预览的可用范围、接口、模型和配额可能调整或暂时不可用，当前不作为稳定服务承诺。用户需自行确认网络可达性，并自行管理账号订阅和支付。退出登录会移除该账号的可用模型与绑定，保留注册信息和模型偏好供重新登录使用。
-
-模型卡片可按模型选择 Chat Completions、Responses 或 Anthropic Messages；未指定时沿用服务商默认协议。OAuth 配置支持 `extra_authorize_params`（含 `{{nonce}}`）、`extra_token_params`、`verify_id_token`、`issuer`、`jwks_url` 和 `dynamic_client_registration`。ChatGPT 的预览约束由接入配置声明，认证来源与协议选择独立；旧版账号引用会自动迁移，已有视觉设置保留。
-
-自动化测试不能代替真实账号验收。首次使用请确认登录、文本推理、工具调用后的第二轮推理、截图输入、重启、刷新及退出登录。官方资料：[开源应用接入](https://developers.openai.com/siwc/token-sharing-open-source)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
+- **计费** — 走 ChatGPT 套餐的共享用量，与 API Key 连接独立；接口失败时不会自动回落到 API 计费。可用模型与额度以官方接口为准。
+- **能力** — 复用 Nuphus 自身的 Agent Runtime 与函数工具，支持模型具备的图片输入；不依赖 Codex CLI，也不读取其他应用的登录凭据。音频与图像生成仍走各自连接。
+- **安全** — 授权回调只监听 `127.0.0.1`，校验 PKCE 与 ID-token；凭据单独保存在本地配置目录的 `chatgpt-accounts.json`（Windows 经 DPAPI 加密，Unix 为 `0600`），**请勿分享或提交该文件**。
+- **预览** — 官方预览接口的模型、配额与可用性可能调整，不作为稳定服务承诺。详见[开源应用接入](https://developers.openai.com/siwc/token-sharing-open-source)与[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
 
 ### 连接手机
 
