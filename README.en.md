@@ -185,6 +185,15 @@ npx tauri dev
 
 > After onboarding, modify config in **Settings → Models**. API keys are encrypted: on Windows they're encrypted with system-level DPAPI into local config.toml (`enc:v1:` format, bound to the current user); macOS/Linux currently store plaintext (relying on file permissions; OS credential integration is on the roadmap). Never share or commit this file.
 
+### Use a ChatGPT plan (preview)
+
+In **Settings → Models → ChatGPT**, click **Continue with ChatGPT** and finish authorization in your system browser to drive the Agent with your plan quota. Multiple accounts/workspaces are supported; models that accept images can enable vision input from their model card.
+
+- **Billing** — Uses your ChatGPT plan's shared quota and stays independent of API Key connections; failures do not fall back to API billing. Available models and quota are subject to the official API.
+- **Capabilities** — Runs on Nuphus's own Agent Runtime and function tools, with image input where the model supports it; no Codex CLI dependency, and no reading of credentials from other apps. Audio and image generation still use their own connections.
+- **Security** — The OAuth callback only listens on `127.0.0.1` and validates PKCE and the ID-token; credentials live in a dedicated file `chatgpt-accounts.json` under the local config directory (DPAPI-encrypted on Windows, `0600` on Unix). **Never share or commit that file.**
+- **Preview** — Models, quota and availability of the official preview API may change; this is not a stable service commitment. See [open-source app access](https://developers.openai.com/siwc/token-sharing-open-source) and [preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
+
 ### Connect your phone
 
 1. Make sure the phone and desktop are on the same Wi-Fi LAN
