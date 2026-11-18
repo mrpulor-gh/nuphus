@@ -309,16 +309,14 @@ Thanks to everyone who makes Nuphus better. Avatars come from GitHub — click a
 
 ### Latest release · v1.5.0 (2026-11-16)
 
-| Contributor | Commit | Summary |
-|-------------|--------|---------|
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`0a618938`](https://github.com/mrpulor-gh/nuphus/commit/0a618938) | Reasoning-effort selection on mobile: the model subpage shows and saves per-provider effort, sharing the backend model-projection path with desktop |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`3dd837b3`](https://github.com/mrpulor-gh/nuphus/commit/3dd837b3) | Mobile navigation rebuilt as bottom tabs (Chat / Sessions / Settings); the brand area is display-only, and the right drawer plus swipe-to-close gesture are gone |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`363955b6`](https://github.com/mrpulor-gh/nuphus/commit/363955b6) | Mobile session list aligned with the desktop session workbench: single-row layout, single-letter mode block, relative time and current badge |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`e05885ce`](https://github.com/mrpulor-gh/nuphus/commit/e05885ce) | Fixes the lost execution trace after reopening on mobile: history no longer clears the trace, and backend `trace_items` field names are normalized |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`0ba437c3`](https://github.com/mrpulor-gh/nuphus/commit/0ba437c3) | Resumes the in-flight turn after a mobile reconnect: the backend accumulates a snapshot at the event outlet and `/agent-status` serves `liveTurn` for streaming bubbles |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`ca27c1dd`](https://github.com/mrpulor-gh/nuphus/commit/ca27c1dd) | First-token waiting indicator on mobile: a line that owns no message identity and disappears once the bubble is created |
+- Reasoning-effort selection on mobile: the model subpage shows and saves per-provider effort, sharing the backend model-projection path with desktop
+- Mobile navigation rebuilt as bottom tabs (Chat / Sessions / Settings); the brand area is display-only, and the right drawer plus swipe-to-close gesture are gone
+- Mobile session list aligned with the desktop session workbench: single-row layout, single-letter mode block, relative time and current badge
+- Fixes the lost execution trace after reopening on mobile: history no longer clears the trace, and backend `trace_items` field names are normalized
+- Resumes the in-flight turn after a mobile reconnect: the backend accumulates a snapshot at the event outlet and `/agent-status` serves `liveTurn` for streaming bubbles
+- First-token waiting indicator on mobile: a line that owns no message identity and disappears once the bubble is created
 
-Only the latest release is kept here — each release replaces the previous contribution list. Earlier records live in [CHANGELOG.md](CHANGELOG.md) and the in-app GitHub contributors page.
+Earlier releases are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

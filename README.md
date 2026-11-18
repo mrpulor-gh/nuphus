@@ -324,16 +324,14 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 
 ### 最新版本 · v1.5.0（2026-11-16）
 
-| 贡献者 | 提交 | 内容 |
-|--------|------|------|
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`0a618938`](https://github.com/mrpulor-gh/nuphus/commit/0a618938) | 移动端支持推理强度选择：模型子页按服务商展示并保存 reasoning effort，后端模型投影与写入口与桌面端共用 |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`3dd837b3`](https://github.com/mrpulor-gh/nuphus/commit/3dd837b3) | 移动端导航重构为底部 Tab（聊天 / 会话 / 设置），品牌区恢复纯展示，右侧抽屉与右滑关闭手势移除 |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`363955b6`](https://github.com/mrpulor-gh/nuphus/commit/363955b6) | 移动端会话列表对齐桌面会话工作台：单行版式、模式单字母方块、行尾相对时间与当前徽标 |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`e05885ce`](https://github.com/mrpulor-gh/nuphus/commit/e05885ce) | 修复移动端重开丢失执行过程：历史不再清空执行轨迹，并归一化后端 `trace_items` 字段名 |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`0ba437c3`](https://github.com/mrpulor-gh/nuphus/commit/0ba437c3) | 移动端执行中重连恢复当前轮：后端在事件出口累积快照，`/agent-status` 下发 `liveTurn` 供流式气泡续写 |
-| [@mrpulor-gh](https://github.com/mrpulor-gh) | [`ca27c1dd`](https://github.com/mrpulor-gh/nuphus/commit/ca27c1dd) | 移动端首 token 等待指示：一行不占消息身份的等待提示，气泡创建后自动消失 |
+- 移动端支持推理强度选择：模型子页按服务商展示并保存 reasoning effort，后端模型投影与写入口与桌面端共用
+- 移动端导航重构为底部 Tab（聊天 / 会话 / 设置），品牌区恢复纯展示，右侧抽屉与右滑关闭手势移除
+- 移动端会话列表对齐桌面会话工作台：单行版式、模式单字母方块、行尾相对时间与当前徽标
+- 修复移动端重开丢失执行过程：历史不再清空执行轨迹，并归一化后端 `trace_items` 字段名
+- 移动端执行中重连恢复当前轮：后端在事件出口累积快照，`/agent-status` 下发 `liveTurn` 供流式气泡续写
+- 移动端首 token 等待指示：一行不占消息身份的等待提示，气泡创建后自动消失
 
-每次发版只保留最近一版的贡献，旧版内容由新版本替换；更早的记录见 [CHANGELOG.md](CHANGELOG.md) 与「设置 → GitHub 贡献者」页。
+更早版本的更新见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可
 
