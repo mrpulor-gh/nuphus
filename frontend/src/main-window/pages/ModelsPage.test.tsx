@@ -1181,6 +1181,31 @@ describe('ModelsPage 模型卡片（收藏 / 能力 / 排序）', () => {
     )
   })
 
+  it('能力 chip：支持推理但无分级时 chip 亮起且不写档数（能力与分级解耦）', async () => {
+    // opencode go 等 provider 的模型支持思考但 efforts 恒空。此前用 tiers>0
+    // 判断会把它们显示成「不支持推理」，是否定上游事实。本用例钉住解耦口径：
+    // supports_reasoning 决定 chip 亮灭，efforts 只决定要不要写档数。
+    vi.mocked(listModels).mockResolvedValue([
+      {
+        id: 'm2',
+        provider: 'custom-fast',
+        alias: [],
+        supports_streaming: true,
+        supports_vision: false,
+        supports_reasoning: true,
+        supports_audio: false,
+        supports_image_generation: false,
+        reasoning_efforts: [],
+      },
+    ] as never)
+    await openModels()
+    await detect([brief('m2', { supports_vision: false })])
+    const reasoningLabel = await within(card('m2')).findByText('文本推理')
+    const reasoningChip = reasoningLabel.closest('.cap-chip') as HTMLElement
+    expect(reasoningChip).toHaveClass('is-on')
+    expect(reasoningChip.querySelector('.cap-chip-detail')).toBeNull()
+  })
+
   it('「使用中」全局唯一：同 id 模型跨 provider 时只标生效归属那一张卡', async () => {
     // 当前生效模型 = (deepseek, dup-model)；二中转也有一个同名 dup-model。
     // 「使用中」一个模型一个 provider，没有第二个——同 id 不得让两张卡同时点亮。

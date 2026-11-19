@@ -857,6 +857,17 @@ export interface ModelInfo {
   alias: string[]
   supports_streaming: boolean
   supports_vision: boolean
+  /**
+   * 模型是否支持推理（思考）。与 `reasoning_efforts` 解耦：支持推理但无分级时
+   * efforts 为空数组、本字段仍为 true。能力判断用本字段，不要用 efforts 反推。
+   */
+  supports_reasoning?: boolean
+  /** 是否接受视频输入（输入模态），与 vision（图片）独立 */
+  supports_video?: boolean
+  /** 是否支持工具调用；false 时后端不得下发 tools（上游会 400）。未知按支持处理 */
+  supports_tool_calling?: boolean
+  /** 推理是否强制开启、不可关闭（上游 reasoningMode=required） */
+  reasoning_required?: boolean
   supports_audio: boolean
   supports_image_generation: boolean
   /** 上下文窗口（tokens）；undefined = 未知 */

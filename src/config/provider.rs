@@ -71,6 +71,16 @@ pub struct ModelDef {
     pub supports_reasoning: bool,
     pub supports_audio: bool,
     pub supports_image_generation: bool,
+    /// 模型是否接受**视频输入**（输入模态）。与 `supports_vision`（图片）独立，
+    /// 也与 `capabilities.video_generation`（视频生成绑定）无关。
+    pub supports_video: bool,
+    /// 模型是否支持工具调用（function calling）。`false` 时 agent 层不得下发
+    /// `tools`——对不支持的模型发送工具定义会被上游以 400 拒绝。
+    /// 默认 `true`：保持既有「无条件下发 tools」的行为不变，只在确知不支持时改 false。
+    pub supports_tool_calling: bool,
+    /// 推理是否**强制开启、不可关闭**（上游语义 `reasoningMode: required`）。
+    /// `true` 时 UI 不得提供「关闭思考」入口，请求侧也不得省略推理参数。
+    pub reasoning_required: bool,
     pub cost_per_million_in: f64,
     pub cost_per_million_out: f64,
     pub reasoning_field: &'static str,

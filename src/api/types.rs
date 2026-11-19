@@ -121,6 +121,17 @@ pub struct ModelInfo {
     pub alias: Vec<String>,
     pub supports_streaming: bool,
     pub supports_vision: bool,
+    /// 模型是否支持推理（思考）。与 `reasoning_efforts` 解耦：支持推理但无可配置
+    /// 分级时 `reasoning_efforts` 为空数组，本字段仍为 true。前端能力 chip 与
+    /// 「是否具备推理」判断必须用本字段，不得用 efforts 是否为空反推能力。
+    pub supports_reasoning: bool,
+    /// 模型是否接受视频输入（输入模态）；与 vision（图片）、image_generation
+    /// （图像生成）互不替代。
+    pub supports_video: bool,
+    /// 模型是否支持工具调用。`false` 时 agent 层不得下发 tools（上游会 400）。
+    pub supports_tool_calling: bool,
+    /// 推理是否强制开启、不可关闭（上游 `reasoningMode: required`）。
+    pub reasoning_required: bool,
     pub supports_audio: bool,
     pub supports_image_generation: bool,
     /// Context window (tokens) the model declares. `None` = unknown.

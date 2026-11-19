@@ -3560,6 +3560,12 @@ export function ModelsPage({
                           !!brief?.supports_image_generation || !!info?.supports_image_generation
                         const audio = !!brief?.supports_audio || !!info?.supports_audio
                         const tiers = info?.reasoning_efforts?.length ?? null
+                        // 推理能力与分级解耦：supports_reasoning 是「支不支持思考」，
+                        // tiers 是「有没有可选档位」。opencode go 等 provider 的模型
+                        // 支持思考但无分级（efforts 恒空），此前用 tiers>0 判断会把
+                        // 它们显示成「不支持推理」——那是否定上游事实，不是保守。
+                        const supportsReasoning =
+                          info?.supports_reasoning ?? (tiers != null && tiers > 0)
                         const out: ModelCardCap[] = [
                           {
                             key: 'vision',
@@ -3580,15 +3586,15 @@ export function ModelsPage({
                               : t('models.imageGenToggleTitleOff'),
                           },
                         ]
-                        // 推理档位：仅有数据（list_models 的 ModelInfo）时才呈现——
-                        // brief（连接探测）不含该字段，未知即不显示，不猜。
-                        if (tiers != null) {
+                        // 推理：有 supports_reasoning 事实或分级数据时呈现。
+                        // 支持但无分级 → chip 亮起、不写档数（不伪造等级）。
+                        if (info?.supports_reasoning != null || tiers != null) {
                           out.push({
                             key: 'reasoning',
                             label: capReasoningLabel,
-                            on: tiers > 0,
+                            on: supportsReasoning,
                             toggleable: false,
-                            detail: tiers > 0 ? `${tiers} 档` : undefined,
+                            detail: tiers != null && tiers > 0 ? `${tiers} 档` : undefined,
                             hint: capReasoningHint,
                           })
                         }

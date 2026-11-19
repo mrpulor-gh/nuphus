@@ -52,6 +52,10 @@ pub struct AgentConfig {
     pub supports_vision: bool,
     /// 主模型是否原生支持图片生成（来自 ModelEntry/ModelDef.supports_image_generation）
     pub supports_image_generation: bool,
+    /// 主模型是否支持工具调用（来自 ModelDef.supports_tool_calling）。
+    /// false 时请求体不携带 tools —— 对不支持 function calling 的模型发送
+    /// 工具定义会被上游以 400 拒绝。默认 true，保持既有「无条件下发」行为。
+    pub supports_tool_calling: bool,
     /// 推理深度（reasoning_effort，来自 config.toml [[providers]] reasoning_effort）。
     /// None = 未配置。作为 config-match 的一部分：修改 effort 会触发 Runtime 重建，
     /// 使 Leader 客户端立即使用新 effort。
@@ -78,6 +82,7 @@ impl Default for AgentConfig {
             vision_model: None,
             supports_vision: false,
             supports_image_generation: false,
+            supports_tool_calling: true,
             reasoning_effort: None,
         }
     }
@@ -549,7 +554,10 @@ impl ReactAgent {
         // 模型无从发起工具调用——85% 硬止损的提炼轮必须只产出摘要，不能继续
         // 膨胀上下文（19e52dee 仅靠提示词「禁止调用任何工具」，模型不遵守时
         // 提炼轮本身就会失控）。其余请求路径不受影响（默认 false）。
-        if !self.tools_suppressed {
+        // 工具下发双重闸门：提炼轮（tools_suppressed）或模型本身不支持
+        // function calling（supports_tool_calling=false）时都不携带 tools ——
+        // 对不支持工具调用的模型发工具定义会被上游以 400 拒绝。
+        if !self.tools_suppressed && self.config.supports_tool_calling {
             let tools = if let Some(tools) = &self.cached_tools_schemas {
                 tools.clone()
             } else {

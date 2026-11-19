@@ -328,6 +328,14 @@ export interface ModelInfo {
   alias: string[]
   supports_streaming: boolean
   supports_vision: boolean
+  /** 是否支持推理（思考）；与 reasoning_efforts 解耦，空 efforts ≠ 不支持 */
+  supports_reasoning?: boolean
+  /** 是否接受视频输入（输入模态） */
+  supports_video?: boolean
+  /** 是否支持工具调用；false 时后端不下发 tools */
+  supports_tool_calling?: boolean
+  /** 推理是否强制开启、不可关闭 */
+  reasoning_required?: boolean
   supports_audio: boolean
   supports_image_generation: boolean
   reasoning_efforts: string[]

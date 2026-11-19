@@ -1883,6 +1883,17 @@ pub fn project_models(registry: &nuphus::config::ModelRegistry) -> Vec<nuphus::a
                 alias: model.alias.clone(),
                 supports_streaming: model.supports_streaming,
                 supports_vision: model.supports_vision,
+                // 推理能力：ModelEntry 不存该位，取 builtin ModelDef 的事实；
+                // 无 builtin（自定义 provider）按未知处理 → false，不猜。
+                supports_reasoning: builtin_meta.map(|m| m.supports_reasoning).unwrap_or(false),
+                // 视频输入 / 工具调用 / 强制推理：同样只有 builtin 是权威来源。
+                // tool_calling 缺省 true —— 与既有「无条件下发 tools」保持一致，
+                // 不能让没有 builtin 的自定义 provider 突然收不到工具定义。
+                supports_video: builtin_meta.map(|m| m.supports_video).unwrap_or(false),
+                supports_tool_calling: builtin_meta
+                    .map(|m| m.supports_tool_calling)
+                    .unwrap_or(true),
+                reasoning_required: builtin_meta.map(|m| m.reasoning_required).unwrap_or(false),
                 supports_audio: model.supports_audio,
                 supports_image_generation: model.supports_image_generation,
                 // Context window: per-model metadata persisted at configure time
