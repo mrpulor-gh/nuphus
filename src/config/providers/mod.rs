@@ -16,6 +16,7 @@ pub mod opencode_go;
 pub mod openrouter;
 pub mod qwen;
 pub mod stepfun;
+pub mod tokenrhythm;
 pub mod xai;
 pub mod zhipu;
 
@@ -32,5 +33,6 @@ pub use opencode_go::OpenCodeGoProvider;
 pub use openrouter::OpenRouterProvider;
 pub use qwen::QwenProvider;
 pub use stepfun::StepFunProvider;
+pub use tokenrhythm::TokenRhythmProvider;
 pub use xai::XaiProvider;
 pub use zhipu::ZhipuProvider;

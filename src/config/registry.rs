@@ -205,7 +205,8 @@ impl ProviderRegistry {
         use super::providers::{
             AnthropicProvider, ByteDanceProvider, CustomProvider, DeepSeekProvider, GoogleProvider,
             KimiProvider, LocalProvider, MiniMaxProvider, OpenAIProvider, OpenCodeGoProvider,
-            OpenRouterProvider, QwenProvider, StepFunProvider, XaiProvider, ZhipuProvider,
+            OpenRouterProvider, QwenProvider, StepFunProvider, TokenRhythmProvider, XaiProvider,
+            ZhipuProvider,
         };
         r.register(Arc::new(DeepSeekProvider));
         r.register(Arc::new(KimiProvider));
@@ -222,6 +223,7 @@ impl ProviderRegistry {
         r.register(Arc::new(OpenCodeGoProvider));
         r.register(Arc::new(XaiProvider));
         r.register(Arc::new(StepFunProvider));
+        r.register(Arc::new(TokenRhythmProvider));
         r
     }
 }

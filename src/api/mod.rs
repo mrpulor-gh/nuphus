@@ -33,6 +33,7 @@ pub enum ProviderKind {
     OpenCodeGo,
     Xai,
     StepFun,
+    TokenRhythm,
 }
 
 impl ProviderKind {
@@ -54,6 +55,7 @@ impl ProviderKind {
             "opencode-go" => Some(Self::OpenCodeGo),
             "xai" => Some(Self::Xai),
             "stepfun" => Some(Self::StepFun),
+            "tokenrhythm" => Some(Self::TokenRhythm),
             _ => None,
         }
     }
@@ -75,6 +77,7 @@ impl ProviderKind {
             Self::OpenCodeGo => "opencode-go",
             Self::Xai => "xai",
             Self::StepFun => "stepfun",
+            Self::TokenRhythm => "tokenrhythm",
         }
     }
 }
