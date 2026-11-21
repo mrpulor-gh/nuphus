@@ -11,12 +11,12 @@
 > **Official website**: [www.nuphus.com](https://www.nuphus.com) — product overview, installers, changelog and documentation
 
 <p align="center">
-  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/Download-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="Download Nuphus 1.5.0"></a>
+  <a href="https://www.nuphus.com/download.html"><img src="https://img.shields.io/badge/Download-Windows%20%7C%20macOS%20%7C%20Linux-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="Download Nuphus 1.5.1"></a>
   &nbsp;
-  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.5.0-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.5.0"></a>
+  <a href="https://github.com/mrpulor-gh/nuphus/releases/latest"><img src="https://img.shields.io/badge/GitHub%20Release-v1.5.1-111827?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Release v1.5.1"></a>
 </p>
 
-> **Version**: 1.5.0 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
+> **Version**: 1.5.1 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -307,14 +307,13 @@ Thanks to everyone who makes Nuphus better. Avatars come from GitHub — click a
   <a href="https://github.com/mrpulor-gh"><img src="https://github.com/mrpulor-gh.png?size=96" width="52" height="52" alt="mrpulor-gh"></a>
 </p>
 
-### Latest release · v1.5.0 (2026-11-16)
+### Latest release · v1.5.1 (2026-11-21)
 
-- Reasoning-effort selection on mobile: the model subpage shows and saves per-provider effort, sharing the backend model-projection path with desktop
-- Mobile navigation rebuilt as bottom tabs (Chat / Sessions / Settings); the brand area is display-only, and the right drawer plus swipe-to-close gesture are gone
-- Mobile session list aligned with the desktop session workbench: single-row layout, single-letter mode block, relative time and current badge
-- Fixes the lost execution trace after reopening on mobile: history no longer clears the trace, and backend `trace_items` field names are normalized
-- Resumes the in-flight turn after a mobile reconnect: the backend accumulates a snapshot at the event outlet and `/agent-status` serves `liveTurn` for streaming bubbles
-- First-token waiting indicator on mobile: a line that owns no message identity and disappears once the bubble is created
+- Added the TokenRhythm provider: 28 chat models with context window and capabilities taken from its official catalog
+- Video input, tool calling and forced reasoning are now first-class model capabilities that persist through model sync, including for custom relays
+- Fixed the mobile send button needing two taps: the press is accepted immediately
+- Workflow runs now report real decode speed and first-token latency
+- Provider display names use official brand names and gained their icons
 
 Earlier releases are recorded in [CHANGELOG.md](CHANGELOG.md).
 

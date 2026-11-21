@@ -170,6 +170,44 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '1.5.1',
+    date: '2026-11-21',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '16fb53df',
+            summary:
+              '新增 TokenRhythm 供应商：内置 28 个对话模型，上下文窗口与能力取自官方模型目录',
+          },
+          {
+            pr: null,
+            commit: 'd763ab5e',
+            summary:
+              '模型能力补全视频输入 / 工具调用 / 强制推理，并随同步落盘，自定义中转站同样生效',
+          },
+          {
+            pr: null,
+            commit: 'c0a60243',
+            summary: '修复移动端发送按钮需点两次：按下即受理，一次点击生效',
+          },
+          {
+            pr: null,
+            commit: '3e732777',
+            summary: '工作流执行统计上报真实解码速度与首 token 延迟',
+          },
+          {
+            pr: null,
+            commit: 'a89a4a26',
+            summary: '供应商显示名统一为官方品牌名并补齐图标',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '1.5.0',
     date: '2026-11-16',
     contributors: [
