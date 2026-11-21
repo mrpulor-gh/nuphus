@@ -353,6 +353,16 @@ pub const CONTEXT_WINDOW_SOURCE_KEY: &str = "context_window_source";
 /// 契约）。注意与用户配置意图 `max_tokens` 分属两个字段——本键只标记采集值。
 pub const MAX_OUTPUT_TOKENS_SOURCE_KEY: &str = "max_output_tokens_source";
 
+/// `supports_video` 的来源标记键：值 `user` = 用户手动设定，同步链路不得覆盖
+/// （与 VISION_SOURCE_KEY 同一契约）。
+pub const VIDEO_SOURCE_KEY: &str = "supports_video_source";
+
+/// `supports_tool_calling` 的来源标记键（同一契约）。
+pub const TOOL_CALLING_SOURCE_KEY: &str = "supports_tool_calling_source";
+
+/// `reasoning_required` 的来源标记键（同一契约）。
+pub const REASONING_REQUIRED_SOURCE_KEY: &str = "reasoning_required_source";
+
 /// 读取模型条目里的来源标记（仅认 `user`；其它/缺失 = 非用户设定）。
 pub fn read_model_vision_source(
     config_path: &std::path::Path,
@@ -497,6 +507,12 @@ pub struct CapabilityOverride {
     pub supports_vision: Option<bool>,
     pub supports_audio: Option<bool>,
     pub supports_image_generation: Option<bool>,
+    /// 是否接受视频输入（`input_modalities` 含 `video` / 上游目录声明）。
+    pub supports_video: Option<bool>,
+    /// 是否支持工具调用（OpenRouter `supported_parameters` 含 `tools` 等）。
+    pub supports_tool_calling: Option<bool>,
+    /// 推理是否强制开启（上游 `reasoningMode: required`；无该语义的源留 `None`）。
+    pub reasoning_required: Option<bool>,
     /// Authoritative effort list (only set when non-empty; `None` = unknown).
     pub reasoning_efforts: Option<Vec<String>>,
     /// Provider-declared default effort (`None` = unknown).
@@ -530,6 +546,9 @@ pub fn builtin_capability(provider_type: &str, model_id: &str) -> Option<Capabil
         supports_vision: Some(def.supports_vision),
         supports_audio: Some(def.supports_audio),
         supports_image_generation: Some(def.supports_image_generation),
+        supports_video: Some(def.supports_video),
+        supports_tool_calling: Some(def.supports_tool_calling),
+        reasoning_required: Some(def.reasoning_required),
         reasoning_efforts: (!def.reasoning_efforts.is_empty()).then(|| {
             def.reasoning_efforts
                 .iter()
@@ -855,6 +874,27 @@ fn apply_capabilities(
     {
         if let Some(v) = cap.supports_image_generation {
             changed |= set_bool(entry, "supports_image_generation", v);
+        }
+    }
+    // 视频输入 / 工具调用 / 强制推理：与 vision 同一屏蔽契约——用户手填
+    // （`*_source = "user"`）优先于任何权威同步值；来源未声明该字段则留空不写。
+    if entry.get(VIDEO_SOURCE_KEY).and_then(|v| v.as_str()) != Some("user") {
+        if let Some(v) = cap.supports_video {
+            changed |= set_bool(entry, "supports_video", v);
+        }
+    }
+    if entry.get(TOOL_CALLING_SOURCE_KEY).and_then(|v| v.as_str()) != Some("user") {
+        if let Some(v) = cap.supports_tool_calling {
+            changed |= set_bool(entry, "supports_tool_calling", v);
+        }
+    }
+    if entry
+        .get(REASONING_REQUIRED_SOURCE_KEY)
+        .and_then(|v| v.as_str())
+        != Some("user")
+    {
+        if let Some(v) = cap.reasoning_required {
+            changed |= set_bool(entry, "reasoning_required", v);
         }
     }
     if let Some(window) = cap.context_window {
@@ -2253,6 +2293,130 @@ supports_vision = true
         std::fs::remove_file(&path).ok();
     }
 
+    /// 方案 B 核心契约：同步链路把 builtin 的「视频输入 / 工具调用 / 强制推理」
+    /// 落盘到 providers.toml，并且能被 `ModelEntry` 反序列化读回——投影链路
+    /// （llm.rs `list_models`）依赖的正是这条读回路径，任一端断开都等于没做。
+    #[test]
+    fn sync_persists_video_tool_calling_and_forced_reasoning_capabilities() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "tokenrhythm"
+provider_type = "tokenrhythm"
+api_key = "sk-test"
+base_url = "https://tokenrhythm.studio/v1"
+"#,
+        );
+        let ids = vec![
+            "kimi-k3".to_string(),   // 视频输入 true
+            "glm-5.3".to_string(),   // reasoningMode = required
+            "qwen4-max".to_string(), // 视频输入 true
+            "glm-5.1".to_string(),   // 三态全 false（对照组）
+        ];
+        sync_provider_models(
+            &path,
+            "tokenrhythm",
+            &ids,
+            &BuiltinCapabilitySource {
+                provider_type: "tokenrhythm",
+            },
+            false,
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let models = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .and_then(|p| p.first())
+            .and_then(|p| p.get("models"))
+            .and_then(|m| m.as_array())
+            .expect("同步后应有 models 数组");
+
+        // 关键：经 ModelEntry 读回，而不是只看 TOML 原始表——投影链路用的是前者。
+        let entry = |id: &str| -> nuphus::config::model::ModelEntry {
+            let table = models
+                .iter()
+                .find(|m| m.get("id").and_then(|v| v.as_str()) == Some(id))
+                .unwrap_or_else(|| panic!("{id} 应被同步落盘"));
+            table.clone().try_into().expect("ModelEntry 必须能反序列化")
+        };
+
+        let kimi = entry("kimi-k3");
+        assert_eq!(kimi.supports_video, Some(true), "kimi-k3 接受视频输入");
+        assert_eq!(
+            kimi.supports_tool_calling,
+            Some(true),
+            "kimi-k3 支持工具调用"
+        );
+        assert_eq!(kimi.reasoning_required, Some(false), "kimi-k3 思考可选");
+
+        let glm = entry("glm-5.3");
+        assert_eq!(glm.reasoning_required, Some(true), "glm-5.3 强制思考");
+        assert_eq!(glm.supports_video, Some(false), "glm-5.3 不接受视频");
+
+        let plain = entry("glm-5.1");
+        assert_eq!(plain.supports_video, Some(false));
+        assert_eq!(plain.supports_tool_calling, Some(true));
+        assert_eq!(plain.reasoning_required, Some(false));
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 用户手填（`*_source = "user"`）优先于 builtin 权威值——三个新字段与
+    /// supports_vision 同一屏蔽契约，否则刷新一次就把用户的判断冲掉。
+    #[test]
+    fn sync_keeps_user_overrides_for_new_capabilities() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "tokenrhythm"
+provider_type = "tokenrhythm"
+api_key = "sk-test"
+
+[[providers.models]]
+id = "kimi-k3"
+supports_video = false
+supports_video_source = "user"
+supports_tool_calling = false
+supports_tool_calling_source = "user"
+"#,
+        );
+        sync_provider_models(
+            &path,
+            "tokenrhythm",
+            &["kimi-k3".to_string()],
+            &BuiltinCapabilitySource {
+                provider_type: "tokenrhythm",
+            },
+            false,
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let model = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .and_then(|p| p.first())
+            .and_then(|p| p.get("models"))
+            .and_then(|m| m.as_array())
+            .and_then(|m| m.first())
+            .expect("模型条目应保留");
+
+        assert_eq!(
+            model.get("supports_video").and_then(|v| v.as_bool()),
+            Some(false),
+            "用户手填的 video 不得被 builtin 的 true 覆盖"
+        );
+        assert_eq!(
+            model.get("supports_tool_calling").and_then(|v| v.as_bool()),
+            Some(false),
+            "用户手填的 tool_calling 不得被 builtin 的 true 覆盖"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
     #[test]
     fn sync_does_not_touch_other_providers() {
         let path = write_temp_config(
@@ -2675,7 +2839,10 @@ supports_vision_source = "user"
             true,
         )
         .unwrap();
-        assert_eq!(report.updated, 0, "用户显式设定不得被覆写");
+        // 该条目仍会被记为「更新」一次：视频 / 工具调用 / 强制推理三个新字段
+        // 由权威链写入（本测试只锁 vision 不被覆写）。屏蔽本身由下方
+        // 「supports_vision 仍为 false」+「source 仍为 user」直接验证。
+        assert_eq!(report.updated, 1);
         assert_eq!(report.removed, 0);
 
         let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
@@ -2734,7 +2901,9 @@ supports_vision_source = "user"
             true,
         )
         .unwrap();
-        assert_eq!(report.updated, 0, "用户显式设定不得被覆写");
+        // 同上：条目被更新一次来自三个新能力字段，image_generation 的
+        // 用户意图由下方「值仍为 true」+「source 仍为 user」直接验证。
+        assert_eq!(report.updated, 1);
         assert_eq!(report.removed, 0);
 
         let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();

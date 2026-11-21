@@ -57,6 +57,20 @@ pub struct ModelEntry {
     pub supports_audio: bool,
     #[serde(default)]
     pub supports_image_generation: bool,
+    /// 模型是否接受**视频输入**（输入模态；与 `supports_vision` 的图片输入独立）。
+    /// `None` = 未知（既未采集到、也未手填）——投影时回落 builtin `ModelDef`，
+    /// 再回落 `false`。用 `Option` 而非 `bool`：`false` 是「明确不支持」，与
+    /// 「不知道」必须区分，否则同步链路会把未知当成否定写死。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_video: Option<bool>,
+    /// 是否支持工具调用（function calling）。`None` = 未知 → 回落 builtin，
+    /// 仍无则按 `true` 处理（保持既有「无条件下发 tools」的行为，见 llm.rs 投影）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_tool_calling: Option<bool>,
+    /// 推理是否**强制开启、不可关闭**（上游语义 `reasoningMode: required`）。
+    /// `None` = 未知 → 回落 builtin，再回落 `false`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_required: Option<bool>,
     /// Reasoning-effort levels this model accepts (e.g. ["low","high","max"]),
     /// discovered from the provider's /models metadata at configure time.
     /// Empty = no configurable effort (frontend hides the selector).
@@ -695,6 +709,9 @@ impl ModelRegistry {
                     context_window_source: None,
                     max_output_tokens: None,
                     max_output_tokens_source: None,
+                    supports_video: None,
+                    supports_tool_calling: None,
+                    reasoning_required: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -733,6 +750,9 @@ impl ModelRegistry {
                     context_window_source: None,
                     max_output_tokens: None,
                     max_output_tokens_source: None,
+                    supports_video: None,
+                    supports_tool_calling: None,
+                    reasoning_required: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -771,6 +791,9 @@ impl ModelRegistry {
                     context_window_source: None,
                     max_output_tokens: None,
                     max_output_tokens_source: None,
+                    supports_video: None,
+                    supports_tool_calling: None,
+                    reasoning_required: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -809,6 +832,9 @@ impl ModelRegistry {
                     context_window_source: None,
                     max_output_tokens: None,
                     max_output_tokens_source: None,
+                    supports_video: None,
+                    supports_tool_calling: None,
+                    reasoning_required: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -846,6 +872,9 @@ impl ModelRegistry {
                     context_window_source: None,
                     max_output_tokens: None,
                     max_output_tokens_source: None,
+                    supports_video: None,
+                    supports_tool_calling: None,
+                    reasoning_required: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -884,6 +913,9 @@ impl ModelRegistry {
                     context_window_source: None,
                     max_output_tokens: None,
                     max_output_tokens_source: None,
+                    supports_video: None,
+                    supports_tool_calling: None,
+                    reasoning_required: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -1153,6 +1185,9 @@ impl ModelRegistry {
                     context_window_source: None,
                     max_output_tokens: None,
                     max_output_tokens_source: None,
+                    supports_video: None,
+                    supports_tool_calling: None,
+                    reasoning_required: None,
                 }],
                 reasoning_effort,
                 extra_headers: BTreeMap::new(),
@@ -1592,6 +1627,9 @@ id = "m1"
                     context_window_source: None,
                     max_output_tokens: None,
                     max_output_tokens_source: None,
+                    supports_video: None,
+                    supports_tool_calling: None,
+                    reasoning_required: None,
                 }],
                 reasoning_effort: None,
                 extra_headers: BTreeMap::new(),
@@ -1729,6 +1767,9 @@ vision_provider = "custom"
                     context_window_source: None,
                     max_output_tokens: None,
                     max_output_tokens_source: None,
+                    supports_video: None,
+                    supports_tool_calling: None,
+                    reasoning_required: None,
                 })
                 .collect(),
             reasoning_effort: None,
@@ -1767,6 +1808,9 @@ vision_provider = "custom"
                 context_window_source: None,
                 max_output_tokens: None,
                 max_output_tokens_source: None,
+                supports_video: None,
+                supports_tool_calling: None,
+                reasoning_required: None,
             })
             .collect();
         provider
@@ -1938,6 +1982,9 @@ vision_provider = "custom"
                 context_window_source: None,
                 max_output_tokens: None,
                 max_output_tokens_source: None,
+                supports_video: None,
+                supports_tool_calling: None,
+                reasoning_required: None,
             })
             .collect();
         provider

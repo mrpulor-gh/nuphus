@@ -1886,14 +1886,22 @@ pub fn project_models(registry: &nuphus::config::ModelRegistry) -> Vec<nuphus::a
                 // 推理能力：ModelEntry 不存该位，取 builtin ModelDef 的事实；
                 // 无 builtin（自定义 provider）按未知处理 → false，不猜。
                 supports_reasoning: builtin_meta.map(|m| m.supports_reasoning).unwrap_or(false),
-                // 视频输入 / 工具调用 / 强制推理：同样只有 builtin 是权威来源。
-                // tool_calling 缺省 true —— 与既有「无条件下发 tools」保持一致，
-                // 不能让没有 builtin 的自定义 provider 突然收不到工具定义。
-                supports_video: builtin_meta.map(|m| m.supports_video).unwrap_or(false),
-                supports_tool_calling: builtin_meta
-                    .map(|m| m.supports_tool_calling)
+                // 视频输入 / 工具调用 / 强制推理：**落盘值优先**（同步链路采集的
+                // 上游事实，或用户手填），其次 builtin ModelDef，最后按安全默认。
+                // tool_calling 兜底 true —— 与既有「无条件下发 tools」保持一致，
+                // 不能让既无落盘值又无 builtin 的自定义 provider 突然收不到工具定义。
+                supports_video: model
+                    .supports_video
+                    .or_else(|| builtin_meta.map(|m| m.supports_video))
+                    .unwrap_or(false),
+                supports_tool_calling: model
+                    .supports_tool_calling
+                    .or_else(|| builtin_meta.map(|m| m.supports_tool_calling))
                     .unwrap_or(true),
-                reasoning_required: builtin_meta.map(|m| m.reasoning_required).unwrap_or(false),
+                reasoning_required: model
+                    .reasoning_required
+                    .or_else(|| builtin_meta.map(|m| m.reasoning_required))
+                    .unwrap_or(false),
                 supports_audio: model.supports_audio,
                 supports_image_generation: model.supports_image_generation,
                 // Context window: per-model metadata persisted at configure time
@@ -2641,6 +2649,16 @@ impl CapabilitySource for ProviderCapabilitySource<'_> {
                 .then(|| entry.input_modalities.iter().any(|m| m == "audio")),
             supports_image_generation: (!entry.output_modalities.is_empty())
                 .then(|| entry.output_modalities.iter().any(|m| m == "image")),
+            // 视频输入：`architecture.input_modalities` 含 `video`。空模态列表
+            // = 该条目未声明 → None（未知），不猜 false。
+            supports_video: (!entry.input_modalities.is_empty())
+                .then(|| entry.input_modalities.iter().any(|m| m == "video")),
+            // 工具调用：`supported_parameters` 是 OpenRouter 的权威声明；空数组
+            // = 未声明（未知）→ None。含 `tools` 才算明确支持。
+            supports_tool_calling: (!entry.supported_parameters.is_empty())
+                .then(|| entry.supported_parameters.iter().any(|p| p == "tools")),
+            // 强制推理：OpenRouter 目录没有 `required` 语义 → 未知，绝不猜。
+            reasoning_required: None,
             reasoning_efforts: (!entry.supported_efforts.is_empty())
                 .then(|| entry.supported_efforts.clone()),
             default_effort: entry.default_effort.clone(),

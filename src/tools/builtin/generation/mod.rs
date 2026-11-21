@@ -748,6 +748,9 @@ mod tests {
             context_window_source: None,
             max_output_tokens: None,
             max_output_tokens_source: None,
+            supports_video: None,
+            supports_tool_calling: None,
+            reasoning_required: None,
         }
     }
 

@@ -51,6 +51,11 @@ pub struct OpenRouterEntry {
     pub input_modalities: Vec<String>,
     /// `architecture.output_modalities` — e.g. `["text","image"]` for image generators.
     pub output_modalities: Vec<String>,
+    /// `supported_parameters` — OpenRouter 声明该模型接受的请求参数（如
+    /// `["tools","tool_choice","reasoning"]`）。工具调用能力的权威来源；
+    /// 空数组 = 该条目未声明（未知），不得据此断言「不支持工具」。
+    #[serde(default)]
+    pub supported_parameters: Vec<String>,
     /// `reasoning.supported_efforts` — e.g. `["low","high"]`.
     pub supported_efforts: Vec<String>,
     /// `reasoning.default_effort`.
@@ -115,6 +120,15 @@ fn parse_entry(item: &serde_json::Value) -> Option<OpenRouterEntry> {
     };
     let input_modalities = modalities("input_modalities");
     let output_modalities = modalities("output_modalities");
+    let supported_parameters = item
+        .get("supported_parameters")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
 
     let reasoning = item.get("reasoning");
     let supported_efforts = reasoning
@@ -147,6 +161,7 @@ fn parse_entry(item: &serde_json::Value) -> Option<OpenRouterEntry> {
         max_completion_tokens,
         input_modalities,
         output_modalities,
+        supported_parameters,
         supported_efforts,
         default_effort,
         pricing_prompt_per_million,
@@ -417,6 +432,7 @@ mod tests {
             max_completion_tokens: None,
             input_modalities: vec!["text".to_string()],
             output_modalities: vec!["text".to_string()],
+            supported_parameters: Vec::new(),
             supported_efforts: Vec::new(),
             default_effort: None,
             pricing_prompt_per_million: 0.0,
