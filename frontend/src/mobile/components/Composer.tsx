@@ -153,6 +153,50 @@ export default function Composer({
     return () => document.removeEventListener('pointerdown', onDown)
   }, [menuOpen])
 
+  /**
+   * 「按下即受理」事件对——修「点两次才发送」：
+   * 手机浏览器点击输入栏内的非输入控件时，会先把焦点从 textarea 移走 → 软键盘收起
+   * → 布局视口变高 + TabBar 重新挂载（ChatScreen 按 focusout 卸载，高度 50px+安全区）
+   * → 输入栏在手指下方位移约「键盘高度 − TabBar 高度」→ touchend 命中测试已不在
+   * 按钮上，合成的 click 被丢弃 → 表现为「第一次点击只收起键盘，第二次才发送」。
+   * 因此在 pointerdown 阶段直接受理动作：先于任何焦点/布局变化发生，一次点击即生效。
+   * 鼠标不走该路径（桌面无软键盘，保留原生 click 语义：按下再抬起才算点击）；
+   * click 仍保留给键盘 Enter/Space 与读屏软件的程序化点击，用 handled 标记去重，
+   * 保证一次物理点击只执行一次。
+   * 代价：以按钮为起点的滑动（想滚消息列表）也会受理一次——按钮是 42px 圆形，
+   * 滚动起点命中概率极低，用「一次点击必生效」换掉「按下后可反悔」，取舍如此。
+   */
+  const tapHandledRef = useRef(false)
+  const tapHandledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(
+    () => () => {
+      if (tapHandledTimerRef.current) clearTimeout(tapHandledTimerRef.current)
+    },
+    [],
+  )
+
+  const pressProps = (activate?: () => void) => ({
+    onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
+      if (e.pointerType === 'mouse') return
+      e.preventDefault() // 不抢焦点：键盘保持弹出，输入框可继续输入
+      tapHandledRef.current = true
+      if (tapHandledTimerRef.current) clearTimeout(tapHandledTimerRef.current)
+      // 700ms 过期：click 可能永远不来（被浏览器抑制），标记不能长期吞掉后续点击
+      tapHandledTimerRef.current = setTimeout(() => {
+        tapHandledRef.current = false
+      }, 700)
+      activate?.()
+    },
+    onClick: () => {
+      if (tapHandledRef.current) {
+        tapHandledRef.current = false
+        return
+      }
+      activate?.()
+    },
+  })
+
   const hasText = value.trim().length > 0
   const hasImages = pendingImages.length > 0
   // 发送按钮可用：离线禁用（与桌面端一致，图片是附加项，仍需文字可发）
@@ -256,9 +300,9 @@ export default function Composer({
   /** 语音输入（A 方案：系统键盘听写，零权限零后端）：
    *  关闭面板 → 聚焦输入框弹出系统键盘 → 引导点击键盘麦克风图标说话。
    *  ⚠️ iOS 要求 focus() 在用户手势同步栈内执行——setTimeout 延迟会丢失
-   *  用户激活（user activation），键盘不弹出（实测「点击语音没弹键盘」根因） */
-  const handleVoiceInput = (e?: React.MouseEvent) => {
-    e?.preventDefault()
+   *  用户激活（user activation），键盘不弹出（实测「点击语音没弹键盘」根因）。
+   *  触摸端由 pressProps 在 pointerdown 内调用，同样处于手势同步栈内。 */
+  const handleVoiceInput = () => {
     setMenuOpen(false)
     onToast?.(t('mobile.voiceKeyboardHint'))
     inputRef.current?.focus()
@@ -302,9 +346,9 @@ export default function Composer({
             type="button"
             ref={plusBtnRef}
             className={`mobile-composer-plus ${menuOpen ? 'open' : ''}`}
-            onClick={toggleMenu}
             aria-label={menuOpen ? t('mobile.closeExtMenu') : t('mobile.openExtMenu')}
             aria-expanded={menuOpen}
+            {...pressProps(toggleMenu)}
           >
             {/* 图标语义 = 图片（面板只有拍摄/相册两项）。不用「+」：桌面端输入栏的
                 「+」是命令/工具菜单，两端同名同形会让用户误以为功能一致。 */}
@@ -336,8 +380,8 @@ export default function Composer({
           <button
             type="button"
             className="mobile-composer-mic"
-            onClick={e => handleVoiceInput(e)}
             aria-label={t('mobile.voiceInput')}
+            {...pressProps(handleVoiceInput)}
           >
             <Mic size={20} aria-hidden="true" />
           </button>
@@ -352,8 +396,8 @@ export default function Composer({
                 type="button"
                 className={isStop ? 'mobile-composer-stop' : 'mobile-composer-send'}
                 disabled={!isStop && !canSend}
-                onClick={isStop ? onStopExecution : handleSend}
                 aria-label={isStop ? '终止' : '发送'}
+                {...pressProps(isStop ? onStopExecution : handleSend)}
               >
                 <MorphIcon
                   icon={isStop ? SquareIcon : SendIcon}
