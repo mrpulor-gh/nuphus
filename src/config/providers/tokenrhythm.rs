@@ -217,7 +217,10 @@ impl Provider for TokenRhythmProvider {
         "tokenrhythm"
     }
     fn display_name(&self) -> &'static str {
-        "TokenRhythm（基元律动）"
+        // 供应商显示名一律用官方品牌名（与 Anthropic / DeepSeek / OpenRouter 等同口径），
+        // 中文名只出现在文档与注释里——`Custom（自定义/中转站）` 是唯一例外，
+        // 因为它描述的是「类型」而不是品牌。
+        "TokenRhythm"
     }
     fn default_base_url(&self) -> &'static str {
         "https://tokenrhythm.studio/v1"

@@ -9,6 +9,7 @@ import opencodeGoSvg from '../../assets/provider-icons/opencode-go.svg?raw'
 import openrouterSvg from '../../assets/provider-icons/openrouter.svg?raw'
 import qwenSvg from '../../assets/provider-icons/qwen.svg?raw'
 import stepfunSvg from '../../assets/provider-icons/stepfun.svg?raw'
+import tokenrhythmSvg from '../../assets/provider-icons/tokenrhythm.svg?raw'
 import xaiSvg from '../../assets/provider-icons/xai.svg?raw'
 import zhipuaiSvg from '../../assets/provider-icons/zhipuai.svg?raw'
 
@@ -21,6 +22,9 @@ import zhipuaiSvg from '../../assets/provider-icons/zhipuai.svg?raw'
  * - stepfun 取官网品牌 logo 的图形部分（www.stepfun.com/assets/logo-B0FsyLQP.svg
  *   的圆形像素方块 path，viewBox 裁到 0 0 36 36；大王 2026-10-19 指定。wordmark
  *   字标不进图标位——16px 方形容器里塞整条横版 logo 不可读）
+ * - tokenrhythm 取官网 favicon（tokenrhythm.studio 的 512×512 透明底 TR monogram），
+ *   缩放 128×128 后把 alpha 通道转成 <mask>、用 currentColor 填充——官网只有位图
+ *   与横版白色 wordmark，直接内嵌位图会在暗色主题下消失
  * 全部为单色 + fill="currentColor"，随 .provider-icon 的 color 继承主题色
  * （用 <img> 会丢失 currentColor，暗色主题下会变黑，故内联渲染）。
  *
@@ -44,6 +48,7 @@ const PROVIDER_ICON: Record<string, string> = {
   xai: xaiSvg,
   'opencode-go': opencodeGoSvg,
   stepfun: stepfunSvg,
+  tokenrhythm: tokenrhythmSvg,
 }
 
 /** 该 provider 是否有图标（调用方据此决定是否回退首字母） */
